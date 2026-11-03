@@ -178,9 +178,11 @@ calls have a daily cap, and each visitor has an hourly question limit.
 
 ## Author
 
-**Dr. Animesh Sinha Roy**, physicist (quantum information theory and quantum computation, 13 years of research: quantum entanglement, decoherence, 
-photons, density-matrix reconstruction, entanglement characterization) building LLM agents.
+**Dr. Animesh Sinha Roy**, physicist (quantum information theory and quantum computation; 13 years of research
+on quantum entanglement, decoherence, QKD, polarization-entangled photons, density-matrix reconstruction and
+entanglement characterization), building LLM agents.
 
+- GitHub: [animeshQKD](https://github.com/animeshQKD)
 - Hugging Face: [animesh1986](https://huggingface.co/animesh1986)
 
 ## License
