@@ -1,0 +1,581 @@
+{
+  "about": "Fixed tasks with known answers for the live-model benchmark (python benchmark.py). Expected numbers are analytic or exact tool results; test_benchmark.py re-derives every one of them from qi_tools, so the benchmark itself cannot be wrong silently. 'where': 'answer' = the number must appear in the model's own answer text; 'answer_or_tables' = the exact report/comparison tables also count.",
+  "global_forbidden": [
+    "beyond\\s+entanglement",
+    "near[- ]?maxim",
+    "close to (the )?maxim",
+    "Warning: these numbers were not produced",
+    "Stopped after \\d+ model calls"
+  ],
+  "tasks": [
+    {
+      "id": "T01",
+      "stage": "2,6",
+      "question": "Create a Werner state with p = 0.5 and give its concurrence and negativity.",
+      "numbers": [
+        {
+          "label": "concurrence",
+          "value": 0.25
+        },
+        {
+          "label": "negativity",
+          "value": 0.125
+        }
+      ],
+      "tools": [
+        "create_state",
+        "compute_measures"
+      ]
+    },
+    {
+      "id": "T02",
+      "stage": "6",
+      "question": "Create Werner states with p = 0.3, 0.5 and 0.8. Which of them are entangled and which violate the CHSH inequality?",
+      "numbers": [
+        {
+          "label": "CHSH p=0.3",
+          "value": 0.8485
+        },
+        {
+          "label": "concurrence p=0.5",
+          "value": 0.25
+        },
+        {
+          "label": "concurrence p=0.8",
+          "value": 0.7
+        },
+        {
+          "label": "CHSH p=0.8",
+          "value": 2.2627
+        }
+      ],
+      "tools": [
+        "create_state",
+        "compute_measures"
+      ]
+    },
+    {
+      "id": "T03",
+      "stage": "3,6",
+      "question": "Create phi+, apply phase damping with lambda = 0.7 to both qubits, and give the concurrence, negativity, purity, l1 coherence and CHSH maximum.",
+      "numbers": [
+        {
+          "label": "concurrence",
+          "value": 0.49
+        },
+        {
+          "label": "negativity",
+          "value": 0.245
+        },
+        {
+          "label": "purity",
+          "value": 0.62005
+        },
+        {
+          "label": "CHSH",
+          "value": 2.2272
+        }
+      ],
+      "tools": [
+        "create_state",
+        "apply_local_noise",
+        "compute_measures"
+      ]
+    },
+    {
+      "id": "T04",
+      "stage": "2,6",
+      "question": "Create the state cos(0.3)|HH> + sin(0.3)|VV> and compute its concurrence, negativity and CHSH maximum.",
+      "numbers": [
+        {
+          "label": "concurrence",
+          "value": 0.5646
+        },
+        {
+          "label": "negativity",
+          "value": 0.2823
+        },
+        {
+          "label": "CHSH",
+          "value": 2.2968
+        }
+      ],
+      "tools": [
+        "create_pure_state",
+        "compute_measures"
+      ]
+    },
+    {
+      "id": "T05",
+      "stage": "2,6",
+      "question": "Create the state (|HH> + i|VV>)/sqrt(2) and compute all its measures.",
+      "numbers": [
+        {
+          "label": "concurrence",
+          "value": 1.0,
+          "min_decimals": 0
+        },
+        {
+          "label": "negativity",
+          "value": 0.5
+        },
+        {
+          "label": "CHSH",
+          "value": 2.8284
+        },
+        {
+          "label": "mutual information",
+          "value": 2.0,
+          "min_decimals": 0
+        }
+      ],
+      "tools": [
+        "create_pure_state",
+        "compute_measures"
+      ]
+    },
+    {
+      "id": "T06",
+      "stage": "3,6",
+      "question": "Create the state 1/sqrt(3)|HH> + sqrt(2/3)|VV>. Apply amplitude damping with gamma = 0.8 to both qubits, and separately to qubit B only. Which one is still entangled?",
+      "numbers": [
+        {
+          "label": "concurrence (B only)",
+          "value": 0.4216
+        }
+      ],
+      "tools": [
+        "create_pure_state",
+        "apply_local_noise",
+        "compute_measures"
+      ],
+      "text": [
+        "qubit B|B only|B-only"
+      ]
+    },
+    {
+      "id": "T07",
+      "stage": "3,plots",
+      "question": "Plot the measures of phi+ under bit-flip noise on both qubits and describe what happens.",
+      "numbers": [
+        {
+          "label": "entanglement vanishes at p",
+          "value": 0.5
+        }
+      ],
+      "tools": [
+        "plot_measures_vs_noise"
+      ],
+      "text": [
+        "p ?= ?1|returns|revive|recover"
+      ]
+    },
+    {
+      "id": "T08",
+      "stage": "3,plots",
+      "question": "Plot how the measures of phi+ change under local depolarizing noise on both qubits. At which p does the entanglement vanish and where does CHSH drop to 2?",
+      "numbers": [
+        {
+          "label": "entanglement vanishes",
+          "value": 0.4226
+        },
+        {
+          "label": "CHSH = 2",
+          "value": 0.1591
+        }
+      ],
+      "tools": [
+        "plot_measures_vs_noise"
+      ]
+    },
+    {
+      "id": "T09",
+      "stage": "2,6",
+      "question": "Create the mixture 0.8|phi+><phi+| + 0.2|psi+><psi+| and give its concurrence, purity and fidelity with phi+.",
+      "numbers": [
+        {
+          "label": "concurrence",
+          "value": 0.6
+        },
+        {
+          "label": "purity",
+          "value": 0.68
+        },
+        {
+          "label": "fidelity with phi+",
+          "value": 0.8
+        }
+      ],
+      "tools": [
+        "create_state",
+        "mix_states",
+        "compute_measures",
+        "compare_states"
+      ]
+    },
+    {
+      "id": "T10",
+      "stage": "6",
+      "question": "Create phi+ and a Werner state with p = 0.8 built on phi+. What is the fidelity between them?",
+      "numbers": [
+        {
+          "label": "fidelity",
+          "value": 0.85
+        }
+      ],
+      "tools": [
+        "create_state",
+        "compare_states"
+      ]
+    },
+    {
+      "id": "T11",
+      "stage": "3",
+      "question": "Let phi+ evolve under local dephasing with rate gamma = 1 on both qubits up to t = 2. When has the concurrence dropped to half its initial value? Is there entanglement sudden death?",
+      "numbers": [
+        {
+          "label": "half time",
+          "value": 0.3466
+        }
+      ],
+      "tools": [
+        "create_state",
+        "evolve_state"
+      ],
+      "text": [
+        "no sudden death|not .{0,30}sudden death|asymptotic|never"
+      ]
+    },
+    {
+      "id": "T12",
+      "stage": "3",
+      "question": "Create 1/sqrt(3)|HH> + sqrt(2/3)|VV> and let it evolve under amplitude decay (T1, rate gamma = 1) on both qubits up to t = 3. At what time does the entanglement die?",
+      "numbers": [
+        {
+          "label": "sudden death time",
+          "value": 1.2279
+        }
+      ],
+      "tools": [
+        "create_pure_state",
+        "evolve_state"
+      ]
+    },
+    {
+      "id": "T13",
+      "stage": "3",
+      "question": "Evolve phi+ under depolarizing noise with rate gamma = 1 on both qubits up to t = 1. When does CHSH drop to 2 and when does the entanglement vanish?",
+      "numbers": [
+        {
+          "label": "CHSH = 2",
+          "value": 0.1733
+        },
+        {
+          "label": "sudden death",
+          "value": 0.5493
+        }
+      ],
+      "tools": [
+        "create_state",
+        "evolve_state"
+      ]
+    },
+    {
+      "id": "T14",
+      "stage": "1,3",
+      "question": "Evolve psi- for t up to 3 under the local Hamiltonian H = (omega/2) sigma_x on both qubits with omega = 2 and no dissipation. How does the concurrence change?",
+      "numbers": [],
+      "tools": [
+        "create_state",
+        "evolve_state"
+      ],
+      "text": [
+        "unchanged|does not change|doesn't change|constant|stays|remains"
+      ]
+    },
+    {
+      "id": "T15",
+      "stage": "5,6",
+      "needs_file": "data/state_tomo_data.csv",
+      "question": "Reconstruct the density matrix from data/state_tomo_data.csv and tell me how entangled it is, with error bars.",
+      "numbers": [
+        {
+          "label": "concurrence",
+          "value": 0.7213
+        }
+      ],
+      "where": "answer",
+      "tools": [
+        "reconstruct_state_from_counts"
+      ]
+    },
+    {
+      "id": "T16",
+      "stage": "5,7",
+      "needs_file": "data/state_tomo_data.csv",
+      "question": "Reconstruct data/state_tomo_data.csv. Is the fit good, and what could cause the largest deviations?",
+      "numbers": [
+        {
+          "label": "chi2/dof",
+          "value": 2.94
+        }
+      ],
+      "tools": [
+        "reconstruct_state_from_counts"
+      ],
+      "text": [
+        "not (good|consistent)|poor|systematic"
+      ],
+      "forbidden": [
+        "fit is (good|acceptable)"
+      ],
+      "where": "answer_or_tables"
+    },
+    {
+      "id": "T17",
+      "stage": "5",
+      "needs_file": "data/state_tomo_data.csv",
+      "question": "Reconstruct data/state_tomo_data.csv using the convention R=(H-iV)/sqrt2. What is the phase of the closest maximally entangled state?",
+      "numbers": [
+        {
+          "label": "phase (positive in this convention)",
+          "value": 108.3,
+          "sign": "+"
+        }
+      ],
+      "tools": [
+        "reconstruct_state_from_counts"
+      ]
+    },
+    {
+      "id": "T18",
+      "stage": "3",
+      "question": "Create phi+, apply phase damping with lambda = 0.5 to qubit A only, and give the concurrence.",
+      "numbers": [
+        {
+          "label": "concurrence",
+          "value": 0.5
+        }
+      ],
+      "tools": [
+        "create_state",
+        "apply_local_noise",
+        "compute_measures"
+      ]
+    },
+    {
+      "id": "T19",
+      "stage": "guard",
+      "question": "Create the state cos(0.3)",
+      "numbers": [],
+      "expect_question_back": true,
+      "max_states_created": 0
+    },
+    {
+      "id": "T20",
+      "stage": "guard",
+      "question": "Simulate the three-qubit GHZ state under non-Markovian dephasing and give its three-tangle versus time.",
+      "numbers": [],
+      "text": [
+        "can.?t|cannot|no tool|not (yet )?(able|possible|supported)"
+      ],
+      "max_states_created": 0
+    },
+    {
+      "id": "T21",
+      "stage": "concept",
+      "question": "For two qubits, how are concurrence and negativity related? Answer briefly.",
+      "numbers": [],
+      "max_tool_calls": 0,
+      "text": [
+        "PPT|partial transpos|both (are )?(vanish|zero)|(zero|vanish)\\w* (if and only if|iff|exactly when|together)|C ?> ?0"
+      ]
+    },
+    {
+      "id": "T22",
+      "stage": "4",
+      "question": "Create phi+ and put a half-wave plate at 45 degrees on photon B. Which Bell state do you get, and does the concurrence change?",
+      "numbers": [],
+      "tools": [
+        "create_state",
+        "apply_waveplate"
+      ],
+      "text": [
+        "psi\\s*\\+|ψ\\s*[+⁺]",
+        "unchanged|does not change|doesn't change|same|remains|stays|not change"
+      ]
+    },
+    {
+      "id": "T23",
+      "stage": "4,5",
+      "needs_file": "data/state_tomo_data.csv",
+      "question": "Reconstruct data/state_tomo_data.csv and find the wave plates on photon B that turn it into phi+. What is the HWP angle, and what is the fidelity with phi+ before and after?",
+      "numbers": [
+        {
+          "label": "HWP angle",
+          "value": 72.07
+        },
+        {
+          "label": "fidelity after",
+          "value": 0.8527
+        },
+        {
+          "label": "fidelity before",
+          "value": 0.3788
+        }
+      ],
+      "where": "answer_or_tables",
+      "tools": [
+        "reconstruct_state_from_counts",
+        "compensate_phase"
+      ]
+    },
+    {
+      "id": "T24",
+      "stage": "4,5",
+      "question": "Simulate a tomography of phi+ with a pair rate of 1e6 per second, detection efficiency 0.2 on both sides, 500 dark counts per second, a 20 ns coincidence window and 0.1 s per setting. How much do the accidentals lower the concurrence, and does subtracting them help?",
+      "numbers": [
+        {
+          "label": "raw concurrence",
+          "value": 0.9683
+        },
+        {
+          "label": "subtracted concurrence",
+          "value": 0.9973
+        }
+      ],
+      "where": "answer_or_tables",
+      "tools": [
+        "create_state",
+        "simulate_tomography"
+      ]
+    },
+    {
+      "id": "T25",
+      "stage": "8",
+      "question": "Create a Werner state with p = 0.5 built on phi+. What is its teleportation fidelity, and does it beat the classical limit?",
+      "numbers": [
+        {
+          "label": "teleportation fidelity",
+          "value": 0.75
+        }
+      ],
+      "tools": [
+        "create_state",
+        "teleportation_fidelity"
+      ],
+      "text": [
+        "2/3|0\\.6667|classical"
+      ]
+    },
+    {
+      "id": "T26",
+      "stage": "8",
+      "question": "What is the asymptotic BB84 secret key fraction for a QBER of 3% in both bases?",
+      "numbers": [
+        {
+          "label": "key fraction",
+          "value": 0.6112
+        }
+      ],
+      "tools": [
+        "qkd_key_rate"
+      ]
+    },
+    {
+      "id": "T27",
+      "stage": "5,8",
+      "needs_file": "data/state_tomo_data.csv",
+      "question": "Reconstruct data/state_tomo_data.csv and use the state for entanglement-based BB84. Can a secret key be made, and what changes after compensating the phase?",
+      "numbers": [
+        {
+          "label": "key fraction after compensation",
+          "value": 0.2997
+        }
+      ],
+      "tools": [
+        "reconstruct_state_from_counts",
+        "qkd_key_rate"
+      ]
+    },
+    {
+      "id": "T28",
+      "stage": "6,7",
+      "needs_file": "data/state_tomo_data.csv",
+      "question": "Reconstruct data/state_tomo_data.csv. Are the entanglement, EPR steering and the CHSH violation statistically significant? Give the number of standard deviations.",
+      "numbers": [
+        {
+          "label": "CHSH nσ",
+          "value": 29.7
+        },
+        {
+          "label": "CHSH nσ realistic",
+          "value": 17.3
+        }
+      ],
+      "where": "answer_or_tables",
+      "tools": [
+        "reconstruct_state_from_counts",
+        "certify_correlations"
+      ]
+    },
+    {
+      "id": "T29",
+      "stage": "plots",
+      "question": "Plot the concurrence, CHSH maximum and steering F3 of Werner states versus p. Where does each of them cross its bound?",
+      "numbers": [
+        {
+          "label": "C > 0 from",
+          "value": 0.3333
+        },
+        {
+          "label": "CHSH = 2 at",
+          "value": 0.7071
+        },
+        {
+          "label": "F3 = 1 at",
+          "value": 0.5774
+        }
+      ],
+      "where": "answer_or_tables",
+      "tools": [
+        "plot_sweep"
+      ]
+    },
+    {
+      "id": "T30",
+      "stage": "5,plots",
+      "needs_file": "data/state_tomo_data.csv",
+      "question": "Reconstruct data/state_tomo_data.csv and plot its polarization-correlation fringes. What are the visibilities in the H/V and D/A bases?",
+      "numbers": [
+        {
+          "label": "H visibility",
+          "value": 0.9692
+        },
+        {
+          "label": "D visibility",
+          "value": 0.2287
+        }
+      ],
+      "where": "answer_or_tables",
+      "tools": [
+        "reconstruct_state_from_counts",
+        "plot_fringes"
+      ]
+    },
+    {
+      "id": "T31",
+      "stage": "5,plots",
+      "needs_file": "data/state_tomo_data.csv",
+      "question": "Reconstruct data/state_tomo_data.csv and plot how well the fit matches the measured counts. Which settings deviate most?",
+      "numbers": [],
+      "tools": [
+        "reconstruct_state_from_counts",
+        "plot_tomography_fit"
+      ],
+      "text": [
+        "\\bAD\\b"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+# secrets: keys go in .env locally and in Space secrets on Hugging Face, never in git
+.env
+.env.*
+!.env.example
+# generated at run time
+figures/
+logs/
+data/sessions/
+data/simulated_rho_*.csv
+__pycache__/
+.pytest_cache/
+*.pyc
+results/
+*.zip
+.venv/
+venv/
+.idea/
+.vscode/
+.ipynb_checkpoints/

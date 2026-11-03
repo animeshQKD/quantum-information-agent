@@ -1,0 +1,14 @@
+numpy
+scipy
+matplotlib
+pytest
+python-dotenv
+langgraph>=1.2
+langchain-core>=1.6
+langchain-groq>=1.1
+langchain-ollama>=1.1
+langchain-google-genai>=4.0
+langchain-openai>=1.0
+charset-normalizer
+rich>=13
+gradio>=6
