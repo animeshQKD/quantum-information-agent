@@ -12,7 +12,7 @@ compare it with local depolarizing noise on both photons. Which destroys more en
 agent plans the work, calls **32 tested physics tools**, and answers with tables and figures.
 
 **The language model never computes a number.** Every value comes from NumPy/SciPy code that is
-covered by 638 tests and 30 analytic checks. An **answer checker** then compares the model's text
+covered by 644 tests and 30 analytic checks. An **answer checker** then compares the model's text
 with the tool results and corrects, removes or sends back statements that the results do not support.
 
 **Try it:** [huggingface.co/spaces/animesh1986/quantum-information-agent](https://huggingface.co/spaces/animesh1986/quantum-information-agent)
@@ -87,6 +87,7 @@ question:
 | **Physics rules** for statements that are known to be false | "global depolarizing keeps a Werner state, while local depolarizing mixes in more components" (local noise on a Bell state is also Werner) → removed |
 | **Conventions** | "azimuth 0°" for circularly polarized light (undefined) → corrected; a column labelled CHSH/2 holding CHSH values → relabelled; "no Bell violation" when only CHSH was tested → "no CHSH violation" |
 | **Completeness** | a state the user asked about was created but never measured → sent back |
+| **Parameter binding**: each value in the question must reach the tool on the channel it was given for | asked for global depolarizing with p = 0.3, ran it with p = 0.03 and quoted that result faithfully (every number grounded, wrong experiment) → sent back; if the model ignores the note, the user sees a warning. Suggested by a reviewer on Hugging Face |
 | **Self-talk** | "Let me note the actual numbers: …" and replies addressed to the checker → removed |
 
 Corrections are made in place (a re-ask often returns a shorter, worse answer); the user sees a short
@@ -136,7 +137,7 @@ The Workbench works without any key.
 ## Tests
 
 ```bash
-pytest -q                     # 638 tests, offline: models are scripted, no API key needed
+pytest -q                     # 644 tests, offline: models are scripted, no API key needed
 python verify_features.py     # 30 results compared with analytic formulas
 ```
 

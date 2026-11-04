@@ -1513,7 +1513,14 @@ def completion_and_claim_notes(question: str, turn: list, answer: str,
         notes.append(("simulation settings", "your simulation did not use the settings the user asked for: "
                       + "; ".join(sim) + ". Call simulate_tomography again with exactly the user's values "
                       "and answer from that result only."))
-    lost = parameters_not_used(question, turn)
+    misbound_v = channel_parameters_misbound(question, turn, with_values=True)
+    misbound = [w for _v, w in misbound_v]
+    if misbound:
+        notes.append(("binding", "; ".join(misbound) + ". The numbers you quote then describe a different "
+                      "experiment from the one the user asked for. Redo those calculations with exactly the "
+                      "user's values, each on the channel it was given for, and answer from those results only."))
+    lost = [x for x in parameters_not_used(question, turn)            # a misbound value is told once, above
+            if not any(abs(float(x) - v) < 1e-9 for v, _w in misbound_v)]
     if lost:
         notes.append(("parameter", "the user's request contains the value(s) " + ", ".join(lost)
                       + " but no tool call in this turn used " + ("it" if len(lost) == 1 else "them")
@@ -1545,6 +1552,75 @@ def parameters_not_used(question: str, turn: list) -> list[str]:
     used = {float(x) for tc in calls for x in re.findall(r"\d+(?:\.\d+)?", json.dumps(tc["args"]))}
     asked = list(dict.fromkeys(_PARAM.findall(question)))
     return [x for x in asked if not any(abs(float(x) - u) < 1e-9 for u in used)]
+
+
+# noise channels as people write them -> the channel names of apply_local_noise / apply_global_noise.
+# Global and collective names are matched first and masked, so 'global depolarizing' is never read as local.
+_GLOBAL_CHANNEL_PHRASES = [
+    (r"(?:global|two[- ]qubit)\s+depolari[sz]\w*", "global_depolarizing"),
+    (r"global\s+(?:dephasing|phase[- ]damping)", "global_dephasing"),
+    (r"(?:collective|correlated)\s+dephasing", "collective_dephasing"),
+    (r"(?:collective\s+(?:amplitude\s+)?(?:damping|decay)|global\s+amplitude\s+damping)", "collective_amplitude_damping"),
+    (r"correlated\s+bit[- ]phase[- ]flip", "correlated_bit_phase_flip"),
+    (r"correlated\s+bit[- ]flip", "correlated_bit_flip"),
+    (r"correlated\s+phase[- ]flip", "correlated_phase_flip"),
+]
+_LOCAL_CHANNEL_PHRASES = [
+    (r"(?:local\s+)?depolari[sz]\w*", "depolarizing"),
+    (r"amplitude[- ]damping", "amplitude_damping"),
+    (r"phase[- ]damping", "phase_damping"),
+    (r"bit[- ]phase[- ]flip", "bit_phase_flip"),
+    (r"bit[- ]flip", "bit_flip"),
+    (r"phase[- ]flip", "phase_flip"),
+]
+_NOISE_TOOLS = ("apply_local_noise", "apply_global_noise", "get_kraus_operators")
+
+
+def requested_channel_parameters(question: str) -> list[tuple[str, float]]:
+    """(channel, value) pairs the question asks for: each decimal value is bound to the nearest noise channel
+    named before it in the same sentence ('global depolarizing noise with p = 0.3 and local depolarizing
+    with p = 0.1' -> [('global_depolarizing', 0.3), ('depolarizing', 0.1)])."""
+    text = question.lower()
+    mentions = []
+    for phrases in (_GLOBAL_CHANNEL_PHRASES, _LOCAL_CHANNEL_PHRASES):
+        for pat, name in phrases:
+            for m in re.finditer(pat, text):
+                mentions.append((m.start(), m.end(), name))
+                text = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]   # mask it
+    pairs = []
+    for m in _PARAM.finditer(question):
+        before = [x for x in mentions if x[1] <= m.start() and m.start() - x[1] <= 80
+                  and not re.search(r"[;!?]|\.(?!\d)", question[x[1]:m.start()])]
+        if before:
+            pairs.append((max(before)[2], float(m.group(1))))
+    return list(dict.fromkeys(pairs))
+
+
+def channel_parameters_misbound(question: str, turn: list, with_values: bool = False) -> list:
+    """A channel the user gave a value for WAS applied, but never with that value (e.g. 'global p = 0.3,
+    local p = 0.1' run as global 0.1 and local 0.3: every value is used somewhere, so parameters_not_used
+    passes, yet each state answers the wrong experiment)."""
+    import agent_tools as at
+    ok_ids = {m.tool_call_id for m in turn if isinstance(m, ToolMessage)
+              and getattr(m, "status", "") != "error" and not _text(m).startswith("Error")}
+    used = {}
+    for m in turn:
+        if isinstance(m, AIMessage):
+            for tc in m.tool_calls or []:
+                if tc["name"] in _NOISE_TOOLS and tc["id"] in ok_ids and "channel" in tc["args"]:
+                    try:
+                        used.setdefault(at._channel_name(str(tc["args"]["channel"])), set()).add(
+                            float(tc["args"].get("param")))
+                    except (TypeError, ValueError):
+                        continue
+    wrong = []
+    for name, value in requested_channel_parameters(question):
+        got = used.get(name)
+        if got and not any(abs(g - value) < 1e-9 for g in got):
+            words = name.replace("_", " ")
+            wrong.append((value, f"{words} with parameter {value:g} was asked for, but the tool calls used "
+                                 f"{words} with " + ", ".join(f"{g:g}" for g in sorted(got))))
+    return [w for _v, w in wrong] if not with_values else wrong
 
 
 _SIM_SETTINGS = [  # (pattern in the question, simulate_tomography arguments it sets)
@@ -1739,9 +1815,11 @@ def _answer_check(state: AgentState):
     if not bad:
         turn = msgs[start:-1]
         earlier_notes = " ".join(_text(m) for m in msgs[start:] if _is_verifier(m))
-        for key, note in completion_and_claim_notes(_text(msgs[start]), turn, _text(final), msgs[:-1]):
+        notes = completion_and_claim_notes(_text(msgs[start]), turn, _text(final), msgs[:-1])
+        for key, note in notes:
             if f"[{key}]" not in earlier_notes:   # each kind of note at most once per question
                 return {"messages": [HumanMessage(f"VERIFIER: [{key}] {note}")]}
+        unresolved = [unresolved_warning(key, _text(msgs[start]), turn) for key, _note in notes]
         fixed, reasons = remove_false_claims(_text(final), msgs[:-1])
         if reasons:
             fixes = ({c[2] for c in _CORRECTIONS + _CIRCULAR_AZIMUTH} | {_PROVES_NONLOCAL[2], _CHSH_HALF_WHY}
@@ -1752,7 +1830,9 @@ def _answer_check(state: AgentState):
         extra = required_notes(turn, fixed)
         if extra:
             fixed += "\n\n" + "\n".join(f"*{x}*" for x in extra)
-        if reasons or extra or text != _text(msgs[-1]):
+        if unresolved:                         # the model was told and did not fix it: tell the user
+            fixed += "\n\n" + "\n".join(f"*(Answer check warning: {w}.)*" for w in dict.fromkeys(unresolved))
+        if reasons or extra or unresolved or text != _text(msgs[-1]):
             return {"messages": [AIMessage(content=fixed, id=final.id)]}
         return {}
     retries = state.get("retries", 0) + 1
@@ -1766,6 +1846,29 @@ def _answer_check(state: AgentState):
             "asked for, bullets) using only numbers that appear in the tool results; delete only "
             "the others. Call a tool again only if the user explicitly asked for that value.")
     return {"retries": retries, "messages": [HumanMessage(note)]}
+
+
+_UNRESOLVED_PLAIN = {
+    "failed tool": "a calculation failed and was not redone",
+    "missing": "a state named in the question was not computed",
+    "never used": "a state was created but never used",
+    "no certify_correlations": "the statistical significance was not computed",
+    "significance": "the statistical significance was not computed",
+    "simulation settings": "the simulation did not use the requested settings",
+}
+
+
+def unresolved_warning(key: str, question: str, turn: list) -> str:
+    """What the user is told when the model was sent a note about this problem and did not fix it."""
+    if key == "parameter":
+        vals = parameters_not_used(question, turn)
+        return ("the value(s) " + ", ".join(vals) + " from the question were not used in any calculation, so "
+                "the numbers above may answer a different setting" if vals else "a value from the question was not used")
+    if key == "binding":
+        return "; ".join(channel_parameters_misbound(question, turn)) + ", so the numbers above answer a different experiment"
+    if key.startswith("no "):
+        return f"a calculation the question needs ({key[3:]}) was not run"
+    return _UNRESOLVED_PLAIN.get(key, "some values above may not match the calculations")
 
 
 def route_after_check(state: AgentState):
