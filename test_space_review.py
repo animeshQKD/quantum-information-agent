@@ -53,3 +53,40 @@ def test_restatement_stripping_keeps_ordinary_text():
     assert s("Concurrence is 0.55. Let me report the actual values: C = 0.55. Done.") == "Concurrence is 0.55. Done."
     keep = "| let me report the values |\nThe values are 0.55 and 0.235.\n- These are close to the bound."
     assert s(keep) == keep
+
+
+# The second Q10 run on the Space (2026-11-05): correct table, two wrong sentences.
+SPACE_2 = ("**Local depolarizing noise destroys more entanglement.** At p = 0.3, global depolarizing leaves "
+           "concurrence 0.55, while local depolarizing on both photons leaves only 0.235.\n\n**What it means**\n"
+           "- Global depolarizing p on a Bell state gives a Werner state with visibility p_W = 1 − p = 0.7, so "
+           "concurrence = 0.7 (here 0.55 after the 0.3 mixing — the tool's value). Local depolarizing on both "
+           "photons gives p_W = (1−p)² = 0.49, a much weaker state.\n"
+           "- Local noise acts on each photon with its own environment, so it degrades the correlations twice as "
+           "effectively as a single global channel.")
+
+
+def test_a_weight_quoted_as_the_concurrence_is_sent_back():
+    """'p_W = 0.7, so concurrence = 0.7': 0.7 is grounded (it is 1 - p) but it is not the concurrence (0.55).
+    'Bell' earlier in the sentence made the check think it was a reference value."""
+    good = SPACE_2.replace("concurrence = 0.7 (here 0.55 after the 0.3 mixing — the tool's value)",
+                           "concurrence = (3·0.7 − 1)/2 = 0.55")
+    notes, final = run(Q10, CALLS + [AIMessage(content=SPACE_2), AIMessage(content=good)])
+    assert len(notes) == 1 and "[quoted value]" in notes[0] and "concurrence 0.7" in notes[0]
+    assert "concurrence = 0.7" not in final and "concurrence = (3·0.7 − 1)/2 = 0.55" in final
+
+
+def test_reference_values_of_a_bell_state_are_still_allowed():
+    notes, final = run(Q10, CALLS + [AIMessage(content=HEAD + "A Bell state has concurrence 1; global noise "
+                                                                "leaves 0.55 and local noise 0.235.")])
+    assert notes == [] and "concurrence 1" in final
+
+
+def test_twice_as_strongly_is_corrected():
+    final = answer("- Local noise acts on each photon with its own environment, so it degrades the correlations "
+                   "twice as effectively as a single global channel.")
+    assert "twice" not in final.split("*(")[0]
+    assert "degrades the correlations more strongly than a single global channel" in final
+    assert "2p − p²" in final
+    # 'twice' about something else is left alone
+    kept = "The concurrence of the global state is more than twice that of the local one."
+    assert kept in answer(kept)

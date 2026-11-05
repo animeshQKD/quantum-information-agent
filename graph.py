@@ -1018,6 +1018,22 @@ _PROVES_NONLOCAL = (re.compile(r"\b(?:prov(?:es|ing|e|en)|confirm(?:s|ing|ed)?|e
                     "a CHSH value computed from a reconstructed state indicates but does not prove Bell "
                     "nonlocality (that needs the CHSH settings measured directly, with the loopholes closed)")
 _NOT_NONLOCAL = _CORRECTIONS[0]
+# 'local noise ... degrades the correlations twice as effectively as a single global channel' (DeepSeek, twice on
+# 2026-11-04): with the same p, local depolarizing on both photons leaves Werner weight (1-p)^2 and global 1-p, so
+# the weight lost is 2p - p^2 versus p: 1.7 times at p = 0.3, and 2 only in the limit p -> 0.
+_TWICE_WHY = ("with the same p, local depolarizing on both photons leaves Werner weight (1−p)² and global 1−p, so "
+              "the weight lost is 2p − p² versus p: less than twice as much (twice only for small p)")
+
+
+def _twice_fix(m):
+    return m.group(1) + ("more strongly than" if m.group(3) else "more strongly")
+
+
+_CORRECTIONS.append((re.compile(r"(\b(?:local|each\s+photon|both\s+photons|two\s+(?:independent\s+)?environments)\b"
+                                r"[^.\n]{0,120}?)\btwice\s+as\s+(fast|effectively|strongly|much|quickly|rapidly|"
+                                r"efficiently|hard|badly|damaging|destructive|harmful)(\s+as)?\b"
+                                r"(?=[^.\n]{0,80}\b(?:global|single|collective|one\s+channel|pair)\b)", re.I),
+                     _twice_fix, _TWICE_WHY))
 # circular light: its polarization ellipse has no azimuth ('right circular, azimuth 45°' copied from the input)
 _CIRCULAR_AZIMUTH = [
     (re.compile(r"(circular[^|\n.;]{0,40}?)\bazimuth\s*(?:of\s*|=\s*|:\s*)?[-+]?\d+(?:\.\d+)?\s*°", re.I),
@@ -1345,7 +1361,9 @@ def quoted_values_not_computed(answer: str, history: list) -> list[str]:
         a = before[-1] if before else 0
         after = re.search(r"[.;](?=\s|$)|\n|\)", answer[m.end():])
         b = m.end() + after.start() if after else len(answer)
-        if _REFERENCE_CONTEXT.search(answer[a:b]):
+        # only the words NEAR the quote say it is a reference value: 'on a Bell state gives a Werner state with
+        # p_W = 0.7, so concurrence = 0.7' (2026-11-04) is about the computed state, although 'Bell' is in the sentence
+        if _REFERENCE_CONTEXT.search(answer[max(a, m.start() - 40):b]):
             continue
         vals = [abs(float(v)) for v in re.findall(rf"['\"]{key}['\"]\s*:\s*(-?\d+(?:\.\d+)?)", text)]
         vals += [abs(float(v)) for v in re.findall(rf"['\"]{key}['\"]\s*:\s*\[\s*(-?\d+(?:\.\d+)?)", text)]
@@ -1610,12 +1628,22 @@ def requested_channel_parameters(question: str) -> list[tuple[str, float]]:
             for m in re.finditer(pat, text):
                 mentions.append((m.start(), m.end(), name))
                 text = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]   # mask it
-    pairs = []
+    # a bare 'global' / 'local' left over ('global and local depolarizing') names a channel without its type:
+    # it makes the binding ambiguous, so it counts as a mention that binds to nothing
+    named = {x[0] for x in mentions}
+    mentions += [(m.start(), m.end(), None) for m in re.finditer(r"\b(?:global|local|collective|correlated)\b", text)
+                 if not any(m.end() < k <= m.end() + 2 for k in named)]      # 'local amplitude damping' is ONE name
+    pairs, prev = [], 0
     for m in _PARAM.finditer(question):
-        before = [x for x in mentions if x[1] <= m.start() and m.start() - x[1] <= 80
+        if re.search(r"[;!?]|\.(?!\d)", question[prev:m.start()]):
+            prev = 0                                     # the previous value was in another sentence
+        before = [x for x in mentions if prev <= x[0] and x[1] <= m.start() and m.start() - x[1] <= 80
                   and not re.search(r"[;!?]|\.(?!\d)", question[x[1]:m.start()])]
-        if before:
-            pairs.append((max(before)[2], float(m.group(1))))
+        # exactly ONE channel named since the previous value: 'global and local noise with p = 0.3 and 0.1
+        # (respectively)' names two and then two values, which a nearest-name rule would bind wrongly
+        if len(before) == 1 and before[0][2]:
+            pairs.append((before[0][2], float(m.group(1))))
+        prev = m.end()
     return list(dict.fromkeys(pairs))
 
 

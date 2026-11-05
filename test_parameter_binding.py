@@ -116,3 +116,15 @@ def test_no_note_when_the_channel_was_not_applied_with_a_value():
     q = "Let phi+ evolve under collective dephasing with gamma = 1 up to t = 2.5 and plot every element."
     turn = [call("create_state", {"kind": "phi+"}, "a")]
     assert graph.channel_parameters_misbound(q, turn) == []
+
+
+def test_ambiguous_binding_stays_silent():
+    """'global and local depolarizing with p = 0.3 and 0.1 respectively': two channels, then two values.
+    Binding each value to the nearest name would send a CORRECT run back, so nothing is bound."""
+    pairs = graph.requested_channel_parameters
+    assert pairs("Apply global and local depolarizing noise with p = 0.3 and 0.1 respectively to phi+.") == []
+    assert pairs("Apply local depolarizing and global depolarizing noise with p = 0.3 and 0.1 to phi+.") == []
+    q = "Apply global and local depolarizing noise with p = 0.3 and 0.1 respectively to phi+ and compare them."
+    turn = [call("apply_global_noise", {"handle": "rho_1", "channel": "global_depolarizing", "param": 0.3}, "b"),
+            call("apply_local_noise", {"handle": "rho_1", "channel": "depolarizing", "param": 0.1}, "c")]
+    assert graph.channel_parameters_misbound(q, turn) == []
