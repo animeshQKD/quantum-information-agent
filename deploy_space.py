@@ -15,7 +15,9 @@ Safety:
     Space runs the same Gradio, Python and package versions that passed the tests here.
 
 Uploading needs a Hugging Face token with WRITE access: run `hf auth login` once (or set
-HF_DEPLOY_TOKEN). The inference token in .env (HF_TOKEN) may be read-only; it is only sent as a secret.
+HF_DEPLOY_TOKEN). The inference token (HF_TOKEN) is NEVER used for uploading, even when it is set in the
+shell: huggingface_hub would otherwise prefer it silently over `hf auth login`, and an inference token
+usually cannot write (2026-11-04: "403 Forbidden ... pass create_pr=1" right after a fresh login).
 """
 import argparse
 import os
@@ -173,6 +175,24 @@ def local_env() -> dict:
     return {k: v for k, v in dotenv_values(".env").items() if v} if os.path.isfile(".env") else {}
 
 
+def deploy_token() -> tuple[str | None, str]:
+    """The token for uploading and where it comes from: HF_DEPLOY_TOKEN, else the `hf auth login` token.
+    HF_TOKEN in the environment is ignored here (it is the inference token, see the docstring)."""
+    if os.getenv("HF_DEPLOY_TOKEN"):
+        return os.environ["HF_DEPLOY_TOKEN"], "HF_DEPLOY_TOKEN"
+    from huggingface_hub import get_token
+    hidden = {k: os.environ.pop(k) for k in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN") if k in os.environ}
+    try:
+        return get_token(), "hf auth login"
+    finally:
+        os.environ.update(hidden)
+
+
+NOT_ALLOWED = ("Hugging Face refused the upload (403): the token from {src} cannot write to {repo}.\n"
+               "Create a token of type Write (huggingface.co -> Settings -> Access Tokens), run\n"
+               "`hf auth login`, choose 'paste a token', paste it at the hidden prompt, and run this again.")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", required=True, help="Space id, e.g. YOUR_NAME/quantum-information-agent")
@@ -221,16 +241,33 @@ def main(argv=None):
             return 0
 
         from huggingface_hub import HfApi
-        api = HfApi(token=os.getenv("HF_DEPLOY_TOKEN") or None)
-        api.create_repo(a.repo, repo_type="space", space_sdk="gradio", private=a.private, exist_ok=True)
-        api.upload_folder(folder_path=folder, repo_id=a.repo, repo_type="space",
-                          commit_message="Deploy Quantum Information Agent",
-                          delete_patterns=["*.py", "data/*.csv"])      # files removed from the whitelist go too
-        if a.settings:
-            for k, v in secrets.items():
-                api.add_space_secret(a.repo, k, v)
-            for k, v in variables.items():
-                api.add_space_variable(a.repo, k, v)
+        from huggingface_hub.errors import HfHubHTTPError
+        token, src = deploy_token()
+        if not token:
+            raise SystemExit("No Hugging Face login found; nothing was uploaded. Run `hf auth login` "
+                             "with a Write token (choose 'paste a token').")
+        api = HfApi(token=token)
+        me = api.whoami()
+        role = me.get("auth", {}).get("accessToken", {}).get("role", "unknown")
+        print(f"Uploading as {me.get('name')} (token from {src}, type: {role}).")
+        owner = a.repo.split("/")[0]
+        if me.get("name") != owner and owner not in [o.get("name") for o in me.get("orgs", [])]:
+            raise SystemExit(f"STOP: you are logged in as {me.get('name')}, but the Space belongs to {owner}; "
+                             "nothing was uploaded.")
+        try:
+            api.create_repo(a.repo, repo_type="space", space_sdk="gradio", private=a.private, exist_ok=True)
+            api.upload_folder(folder_path=folder, repo_id=a.repo, repo_type="space",
+                              commit_message="Deploy Quantum Information Agent",
+                              delete_patterns=["*.py", "data/*.csv"])  # files removed from the whitelist go too
+            if a.settings:
+                for k, v in secrets.items():
+                    api.add_space_secret(a.repo, k, v)
+                for k, v in variables.items():
+                    api.add_space_variable(a.repo, k, v)
+        except HfHubHTTPError as e:
+            if getattr(e.response, "status_code", None) == 403:
+                raise SystemExit(NOT_ALLOWED.format(src=src, repo=a.repo)) from None
+            raise
         print(f"\nDone: https://huggingface.co/spaces/{a.repo} (it builds for a few minutes).")
         return 0
     finally:

@@ -770,7 +770,27 @@ _LESS = r"lower|smaller|less|reduced|weaker|below"
 _MORE = r"higher|larger|bigger|greater|more|stronger|above|exceed"
 _DESTROY = (r"\b(?:(?:destroy|destruct|reduc|degrad|damag|harm|detriment|los[estin]|kill|eras|suppress|attack|"
             r"deplet|deteriorat|wash|decay|decreas|diminish|hurt|severe|aggressive|drop|fall|declin|penal)\w*"
-            r"|effective\s+at\s+remov\w*|effects?|impacts?|noisier|harsher|worse)\b")
+            r"|effective\s+at\s+remov\w*|effects?|impacts?|noisier|harsher|worse|toll|hit|blow|cost|penalt\w*)\b")
+# a sentence about a channel ('local noise ...') is only compared when its verb says what is LEFT ('leaves more
+# entanglement') or what is destroyed: 'takes a bigger toll on entanglement' (2026-11-04, a true sentence that was
+# removed) uses a damage word the list above did not know, and an unknown verb must never lead to a removal.
+_CHANNEL_SUBJECT = r"\b(?:noise|channels?|depolari[sz]\w*|dephasing|damping|decoherence|environments?)\b"
+_STATE_SUBJECT = r"\b(?:state|rho_\d+|ρ\S*|pair|photons?)\b"
+_PRESERVE = (r"\b(?:leav\w*|left|keep\w*|kept|preserv\w*|retain\w*|maintain\w*|stays?|remains?|ends?\s+(?:up\s+)?with"
+             r"|results?\s+in|yields?|gives?|is|are|has|have|survives?|protects?|gentler|milder)\b")
+
+
+def _who(h: str) -> str:
+    """A handle in words for the user: 'rho_3 (local depolarizing 0.3 on both photons)'."""
+    desc = DESC.get(h, "")
+    m = re.match(r"(global_|collective_|correlated_)?(\w+)\(([^)]*)\)\s*(on both qubits|on qubit ([AB]) only|on the pair)?", desc)
+    if not m:
+        return f"{h} ({desc})" if desc and len(desc) < 40 else h
+    name = (m.group(1) or "") + m.group(2)
+    where = (" on both photons" if m.group(4) == "on both qubits" else
+             f" on photon {m.group(5)}" if m.group(5) else "")
+    kind = "" if m.group(1) else "local "
+    return f"{h} ({kind}{name.replace('_', ' ')} {m.group(3)}{where})"
 
 
 def _wrong_comparison_rules(answer: str, messages: list) -> list[tuple[str, str]]:
@@ -811,7 +831,7 @@ def _wrong_comparison_rules(answer: str, messages: list) -> list[tuple[str, str]
                 ds, do = abs(float(meas[s_]["chsh_max"]) - 2), abs(float(meas[o_]["chsh_max"]) - 2)
                 if ds > do + 1e-4:
                     rules.append((re.escape(sent.strip()[:60]),
-                                  f"CHSH max of {s_} is {float(meas[s_]['chsh_max']):.4f} and of {o_} is "
+                                  f"CHSH max of {_who(s_)} is {float(meas[s_]['chsh_max']):.4f} and of {_who(o_)} is "
                                   f"{float(meas[o_]['chsh_max']):.4f}: {o_} is the one closer to 2"))
                     continue
         c = re.search(rf"\b({_LESS}|{_MORE})\b[^.\n]{{0,40}}?\bthan\b(.{{0,40}})", sent, flags=re.I)
@@ -829,13 +849,16 @@ def _wrong_comparison_rules(answer: str, messages: list) -> list[tuple[str, str]
         window = sent[max(0, c.start() - 40):c.start()] + " " + sent[c.end(1):c.end() - len(after)]
         if re.search(_DESTROY, window, flags=re.I):
             less = not less
+        elif (re.search(_CHANNEL_SUBJECT, before, flags=re.I) and not re.search(_STATE_SUBJECT, before, flags=re.I)
+              and not re.search(_PRESERVE, sent[:c.start()], flags=re.I)):
+            continue                                    # what the channel does is unclear: never remove
         for pat, q in _COMPARE_Q:
             if not re.search(pat, before, flags=re.I) or q not in meas[s] or q not in meas[t]:
                 continue
             vs, vt = float(meas[s][q]), float(meas[t][q])
             if (less and vs > vt + 1e-4) or (not less and vs < vt - 1e-4):
                 rules.append((re.escape(sent.strip()[:60]),
-                              f"{q.replace('_', ' ')} of {s} is {vs:.4f} and of {t} is {vt:.4f}, so it is "
+                              f"{q.replace('_', ' ')} of {_who(s)} is {vs:.4f} and of {_who(t)} is {vt:.4f}, so it is "
                               f"{'not lower' if less else 'not higher'}"))
                 break
     return rules
@@ -1711,6 +1734,32 @@ _BULLET_LABEL = re.compile(r"^(\s*(?:[-*•]|\d+\.)\s+(?:\*\*[^*\n]+\*\*\s*[:—
 _ASKED_AND_DENIED = re.compile(r"(\(|:\s+|^)(?:and\s+)?[^?!:\n()]{0,30}[<>≤≥][^?!:\n()]{0,15}\?\s*No\s*[—–-]+\s*")
 
 
+# 'Let me report the tool's numbers: concurrence 0.55, negativity 0.275. These are the actual computed values.'
+# (2026-11-04, DeepSeek on the Space): the model re-quoting the table to the checker. The whole sentence goes,
+# because the numbers in it are already in the table and name no state.
+_RESTATE = re.compile(r"(?:^|(?<=[.!?:]\s)|(?<=\*\*\s))\s*let\s+me\s+(?:report|quote|restate|repeat|give|list|use|stick\s+to)\s+"
+                      r"(?:only\s+)?(?:the\s+)?(?:tool['’]?s?\s+|computed\s+|actual\s+|exact\s+|correct\s+)*"
+                      r"(?:numbers|values|results)\b[^\n]*?(?:\.(?=\s|$)|$)"
+                      r"|\s*(?:these|those)\s+are\s+the\s+(?:tool['’]?s?\s+)?(?:actual|exact|correct|real|true)\s+"
+                      r"(?:computed\s+)?(?:numbers|values|results)\s*\.", re.I)
+
+
+def strip_restatement(text: str) -> str:
+    out = []
+    for line in text.split("\n"):
+        lab = _BULLET_LABEL.match(line)
+        head, body = (lab.group(1), line[lab.end():]) if lab else ("", line)
+        if line.lstrip().startswith("|") or not _RESTATE.search(body):
+            out.append(line)
+            continue
+        new = re.sub(r"\s{2,}", " ", _RESTATE.sub("", body)).strip()
+        if not new or re.fullmatch(r"\*\*[^*]+\*\*\s*[:—–-]?", new):
+            continue                                    # nothing left of the line or bullet
+        line = head + new[:1].upper() + new[1:]
+        out.append(line)
+    return "\n".join(out)
+
+
 def strip_self_talk(text: str) -> str:
     """Remove a model thinking aloud ('CHSH max = 2.263 > 2√2? No — … Wait, let me check: …'): keep what
     follows the last self-check of a line, and drop 'X? No —' fragments."""
@@ -1804,7 +1853,7 @@ def _answer_check(state: AgentState):
     final = msgs[-1]
     if getattr(final, "name", None) in (BUDGET_STOP, HELP_REPLY):
         return {}
-    text = strip_self_talk(strip_meta(_normalize(_text(final))))
+    text = strip_self_talk(strip_restatement(strip_meta(_normalize(_text(final)))))
     if text != _text(final):            # e.g. gpt-oss writes 'Bell‑local' with U+2011: checks need '-'
         final = AIMessage(content=text, id=final.id, tool_calls=[])
     earlier = " ".join(_text(m) for m in msgs[start:] if _is_verifier(m))

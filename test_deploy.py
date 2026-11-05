@@ -215,3 +215,65 @@ def test_space_card_links_the_github_repository(tmp_path):
     assert "**Source code, tests and design notes:** https://github.com/me/quantum-information-agent" in card
     deploy_space.stage(str(tmp_path / "b"), "Quantum Information Agent", {})
     assert "Source code" not in (tmp_path / "b" / "README.md").read_text(encoding="utf-8")
+
+
+def test_upload_never_uses_the_inference_token_from_the_shell(monkeypatch):
+    """2026-11-04: HF_TOKEN (the inference token) was set in the shell, so huggingface_hub used it instead
+    of the fresh `hf auth login` token, and the upload failed with 403. Uploading must ignore HF_TOKEN."""
+    import huggingface_hub
+    seen = {}
+    monkeypatch.setenv("HF_TOKEN", "inference-token")
+    monkeypatch.delenv("HF_DEPLOY_TOKEN", raising=False)
+    monkeypatch.setattr(huggingface_hub, "get_token",
+                        lambda: seen.setdefault("env", os.environ.get("HF_TOKEN")) or "login-token")
+    assert deploy_space.deploy_token() == ("login-token", "hf auth login")
+    assert seen["env"] is None and os.environ["HF_TOKEN"] == "inference-token"     # restored afterwards
+    monkeypatch.setenv("HF_DEPLOY_TOKEN", "deploy-token")
+    assert deploy_space.deploy_token() == ("deploy-token", "HF_DEPLOY_TOKEN")
+
+
+class FakeApi:
+    def __init__(self, name="me", status=None):
+        self.name, self.status, self.uploaded = name, status, False
+
+    def __call__(self, token=None):
+        return self
+
+    def whoami(self):
+        return {"name": self.name, "orgs": [], "auth": {"accessToken": {"role": "write"}}}
+
+    def create_repo(self, *a, **k):
+        if self.status:
+            import httpx
+            from huggingface_hub.errors import HfHubHTTPError
+            r = httpx.Response(self.status, request=httpx.Request("POST", "https://huggingface.co"))
+            raise HfHubHTTPError("403 Forbidden", response=r)
+
+    def upload_folder(self, *a, **k):
+        self.uploaded = True
+
+
+def _deploy(monkeypatch, fake):
+    import huggingface_hub
+    monkeypatch.setattr(deploy_space, "check_install", lambda path: None)
+    monkeypatch.setattr(deploy_space, "deploy_token", lambda: ("tok", "hf auth login"))
+    monkeypatch.setattr(huggingface_hub, "HfApi", fake)
+    return deploy_space.main(["--repo", "me/x"])
+
+
+def test_a_403_is_explained_in_plain_words(monkeypatch):
+    with pytest.raises(SystemExit, match="(?s)cannot write to me/x.*paste a token"):
+        _deploy(monkeypatch, FakeApi(status=403))
+
+
+def test_wrong_account_uploads_nothing(monkeypatch):
+    fake = FakeApi(name="someone-else")
+    with pytest.raises(SystemExit, match="logged in as someone-else"):
+        _deploy(monkeypatch, fake)
+    assert not fake.uploaded
+
+
+def test_right_account_uploads(monkeypatch, capsys):
+    fake = FakeApi()
+    assert _deploy(monkeypatch, fake) == 0 and fake.uploaded
+    assert "Uploading as me (token from hf auth login, type: write)" in capsys.readouterr().out

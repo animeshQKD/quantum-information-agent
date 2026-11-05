@@ -369,7 +369,7 @@ def test_comparison_claims_are_checked_against_the_measures():
             "- Coherence and mutual information are lower than for phi+, reflecting noise and imperfections.")
     out, why = remove_false_claims(text, msgs)
     assert "less entangled" in out and "Coherence and mutual" not in out
-    assert "coherence l1 of rho_1 is 1.0397 and of rho_2 is 1.0000" in why[0]
+    assert "coherence l1 of rho_1 is 1.0397 and of rho_2 (phi+) is 1.0000" in why[0]
 
 
 def test_reasonable_fit_claim_after_a_poor_fit_is_removed():
