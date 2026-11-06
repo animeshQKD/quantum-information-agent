@@ -27,8 +27,8 @@ import sys
 import tempfile
 from importlib import metadata
 
-APP_FILES = ["app.py", "agent_tools.py", "capabilities.py", "display.py", "graph.py", "llm.py", "plots.py",
-             "qi_tools.py", "routing.py", "session.py", "workbench.py", "workbench_ui.py"]
+APP_FILES = ["app.py", "agent_tools.py", "capabilities.py", "display.py", "graph.py", "llm.py", "mcp_server.py",
+             "plots.py", "qi_tools.py", "routing.py", "session.py", "workbench.py", "workbench_ui.py"]
 DATA_FILES = ["data/state_tomo_data.csv", "data/example_fringe_scan.csv"]
 
 # packages the app imports, pinned to the versions tested here (gradio itself comes from the Space's
@@ -100,7 +100,7 @@ def check_install(req_file: str) -> str | None:
 
 
 TAGS = ["quantum", "quantum-information", "quantum-optics", "quantum-computing", "physics", "photonics",
-        "entanglement", "tomography", "agent", "langgraph", "tool-calling", "education"]
+        "entanglement", "tomography", "agent", "langgraph", "tool-calling", "education", "mcp-server"]
 
 
 def model_ids(env: dict) -> list[str]:
@@ -114,8 +114,14 @@ def model_ids(env: dict) -> list[str]:
     return out
 
 
-def readme(title: str, env: dict | None = None, thumbnail: str = "", github: str = "") -> str:
+def space_host(repo: str) -> str:
+    """The Space's own web address: 'Animesh1986/my_app' -> 'animesh1986-my-app.hf.space'."""
+    return re.sub(r"[^a-z0-9-]", "-", repo.lower().replace("/", "-")) + ".hf.space"
+
+
+def readme(title: str, env: dict | None = None, thumbnail: str = "", github: str = "", repo: str = "") -> str:
     import gradio
+    mcp_url = f"https://{space_host(repo)}/gradio_api/mcp/" if repo else "https://<this Space's host>/gradio_api/mcp/"
     py = f"{sys.version_info.major}.{sys.version_info.minor}"
     models = model_ids(env or {})
     yaml_list = lambda key, xs: (f"{key}:\n" + "".join(f"  - {x}\n" for x in xs)) if xs else ""   # noqa: E731
@@ -143,8 +149,10 @@ check removes or corrects statements that the computed results do not support.
 with their Kraus operators, Lindblad time evolution, wave plates, tomography of your own counts with
 error bars, certification, protocols (teleportation, QKD key rate), and plots.
 
-**Two ways to use it:** the *Chat* tab (language model) and the *Workbench* tab (the same tools from
-panels, no language model, no limits).
+**Three ways to use it:** the *Chat* tab (language model), the *Workbench* tab (the same tools from
+panels, no language model, no limits), and an **MCP server** for your own agent (Claude Desktop, Cursor, ...):
+the physics tools at `{mcp_url}` (setup for Claude Desktop and Cursor is in the app under *Use these
+tools from your own agent*). No language model runs for MCP calls.
 
 **Limits of this public demo:** one or two photons (qubits); {VARIABLES['QUESTIONS_PER_HOUR']} chat
 questions per hour per visitor; the free model quotas can run out for the day; uploaded files and
@@ -154,7 +162,8 @@ Built by Dr. Animesh Sinha Roy with LangGraph and Gradio.{chr(10) + chr(10) + "*
 """
 
 
-def stage(folder: str, title: str, env: dict | None = None, thumbnail: str = "", github: str = "") -> list[str]:
+def stage(folder: str, title: str, env: dict | None = None, thumbnail: str = "", github: str = "",
+          repo: str = "") -> list[str]:
     """Copy the whitelisted files plus the generated README and requirements into `folder`."""
     missing = [p for p in APP_FILES + DATA_FILES if not os.path.isfile(p)]
     if missing:
@@ -163,7 +172,7 @@ def stage(folder: str, title: str, env: dict | None = None, thumbnail: str = "",
         os.makedirs(os.path.join(folder, os.path.dirname(p)), exist_ok=True)
         shutil.copy(p, os.path.join(folder, p))
     with open(os.path.join(folder, "README.md"), "w", encoding="utf-8") as f:
-        f.write(readme(title, env, thumbnail, github))
+        f.write(readme(title, env, thumbnail, github, repo))
     with open(os.path.join(folder, "requirements.txt"), "w", encoding="utf-8") as f:
         f.write(requirements())
     return sorted(os.path.relpath(os.path.join(r, n), folder).replace("\\", "/")
@@ -208,7 +217,7 @@ def main(argv=None):
     folder = tempfile.mkdtemp(prefix="qi_space_")
     try:
         env = local_env()
-        files = stage(folder, a.title, env, a.thumbnail, a.github)
+        files = stage(folder, a.title, env, a.thumbnail, a.github, a.repo)
         bad = find_keys([os.path.join(folder, f) for f in files])
         if bad:
             raise SystemExit("STOP: these files contain something that looks like an API key; nothing was "

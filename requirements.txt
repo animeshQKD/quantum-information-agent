@@ -11,4 +11,4 @@ langchain-google-genai>=4.0
 langchain-openai>=1.0
 charset-normalizer
 rich>=13
-gradio>=6
+gradio[mcp]>=6

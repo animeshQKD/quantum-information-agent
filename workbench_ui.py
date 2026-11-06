@@ -15,6 +15,7 @@ import session
 import workbench as wb
 
 SAMPLE_CSV = "data/state_tomo_data.csv"
+PRIVATE = "private"     # UI events are not API/MCP endpoints: the MCP tools are in mcp_server.py
 SWEEP_HELP = {
     "werner_p": "Werner state p|B⟩⟨B| + (1−p)I/4 versus p (choose B below)",
     "pure_angle": "cos θ|HH⟩ + sin θ|VV⟩ versus θ (radians)",
@@ -89,7 +90,7 @@ def build(sid, box, tabs):
                 create = gr.Button("Create", variant="primary")
                 groups = [g_bell, g_pure, g_mix, g_photon, g_red, g_prod]
                 kinds = ["bell", "pure", "mixture", "photon", "reduced", "product"]
-                mode.change(lambda m: [gr.update(visible=m == k) for k in kinds], mode, groups)
+                mode.change(lambda m: [gr.update(visible=m == k) for k in kinds], mode, groups, api_visibility=PRIVATE)
                 gr.Markdown("**Density matrix of a stored state** (as numbers)")
                 with gr.Row():
                     show_h = picker("State")
@@ -112,7 +113,7 @@ def build(sid, box, tabs):
                 with gr.Row():
                     n_go = gr.Button("Apply noise (creates a new state)", variant="primary")
                     c_go = gr.Button("Plot versus the parameter, 0 → 1 (same state and channel)")
-                n_ch.change(lambda c: wb.CHANNEL_HELP[c], n_ch, n_info)
+                n_ch.change(lambda c: wb.CHANNEL_HELP[c], n_ch, n_info, api_visibility=PRIVATE)
                 gr.Markdown("**Time evolution** (Lindblad master equation; creates the state at t_max). Local "
                             "processes act on the photons chosen under *On*; global ones on the pair.")
                 with gr.Row():
@@ -125,7 +126,7 @@ def build(sid, box, tabs):
                 e_info = gr.Markdown(wb.PROCESS_HELP["dephasing"])
                 e_el = gr.Checkbox(False, label="Also plot every density-matrix element versus time")
                 e_go = gr.Button("Evolve")
-                e_proc.change(lambda p_: wb.PROCESS_HELP[p_], e_proc, e_info)
+                e_proc.change(lambda p_: wb.PROCESS_HELP[p_], e_proc, e_info, api_visibility=PRIVATE)
 
             with gr.Tab("Wave plates"):
                 with gr.Row():
@@ -274,7 +275,7 @@ def build(sid, box, tabs):
     outs = [out_md, out_img, out_img2, summary, states_md] + dropdowns
 
     def wire(button, fn, inputs, jump=False):
-        button.click(action(fn, len(inputs), jump), [sid] + inputs + dropdowns, outs)
+        button.click(action(fn, len(inputs), jump), [sid] + inputs + dropdowns, outs, api_visibility=PRIVATE)
 
     def make(s, m, k, p_, b, hh, hv, vh, vv, ma, mb, w, how, pol, az, el, dop, pair, which, pa, pb):
         return wb.create(s, m, k, p_, b, (hh, hv, vh, vv), ma, mb, w, how, pol, az, el, dop, pair, which, pa, pb)
@@ -299,12 +300,12 @@ def build(sid, box, tabs):
     wire(fr_go, wb.fringes, [fr_h])
     wire(bl_go, wb.bloch, [bl_h])
 
-    t_file.upload(copy_upload, [t_file, sid], t_path)
-    t_sample.click(lambda: SAMPLE_CSV, None, t_path)
-    refresh.click(updates, [sid] + dropdowns, [states_md] + dropdowns)
-    tab.select(updates, [sid] + dropdowns, [states_md] + dropdowns)
+    t_file.upload(copy_upload, [t_file, sid], t_path, api_visibility=PRIVATE)
+    t_sample.click(lambda: SAMPLE_CSV, None, t_path, api_visibility=PRIVATE)
+    refresh.click(updates, [sid] + dropdowns, [states_md] + dropdowns, api_visibility=PRIVATE)
+    tab.select(updates, [sid] + dropdowns, [states_md] + dropdowns, api_visibility=PRIVATE)
     explain.click(lambda s: (wb.explain_prompt(s), gr.Tabs(selected="chat")) if s else
-                  (gr.update(), gr.update()), summary, [box, tabs])
+                  (gr.update(), gr.update()), summary, [box, tabs], api_visibility=PRIVATE)
     return tab
 
 

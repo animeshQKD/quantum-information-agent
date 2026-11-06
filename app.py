@@ -5,6 +5,7 @@ Answers render with real tables and bold text, figures appear inline, and the to
 are in a collapsible box above each answer. Every browser tab is its own session (session.py):
 its own states, uploads and figures, deleted after SESSION_TTL_S seconds without a question.
 The same file runs the public Hugging Face Space (see deploy_space.py); keys come from Space secrets there.
+It is also an MCP server (mcp_server.py): other agents call the physics tools at <address>/gradio_api/mcp/.
 Limits per visitor: MAX_QUESTION_CHARS characters per question, QUESTIONS_PER_HOUR questions per hour.
 """
 import logging
@@ -20,6 +21,7 @@ import agent_tools
 import capabilities
 import graph
 import llm
+import mcp_server
 import plots
 import routing
 import session
@@ -115,6 +117,31 @@ def capabilities_panel(box):
                     + "\n".join(f"- {x}" for x in capabilities.LIMITS))
 
 
+def base_url() -> str:
+    host = os.getenv("SPACE_HOST")                  # set by Hugging Face, e.g. user-name.hf.space
+    return f"https://{host}" if host else f"http://127.0.0.1:{os.getenv('GRADIO_SERVER_PORT', '7860')}"
+
+
+def mcp_panel():
+    """How to call the physics tools from your own agent (Claude Desktop, Cursor, ...)."""
+    url = mcp_server.server_url(base_url())
+    with gr.Accordion("Use these tools from your own agent (MCP server)", open=False):
+        gr.Markdown(
+            f"The {len(mcp_server.TOOLS)} physics tools are also an **MCP server**, so other agents can call them "
+            f"directly (no language model runs here):\n\n`{url}`\n\n"
+            "**Cursor** (`~/.cursor/mcp.json`) or any client that speaks streamable HTTP:\n"
+            f"```json\n{{\"mcpServers\": {{\"quantum-information\": {{\"url\": \"{url}\"}}}}}}\n```\n"
+            + ("**Claude Desktop / claude.ai:** *Customize → Connectors → Add custom connector*, paste the "
+               "address above, no sign-in needed.\n\n" if session.ON_SPACE else
+               "**Claude Desktop** (a local server: add a bridge to `claude_desktop_config.json`, needs Node.js, "
+               "then restart Claude Desktop):\n"
+               f"```json\n{{\"mcpServers\": {{\"quantum-information-local\": {{\"command\": \"npx\", "
+               f"\"args\": [\"mcp-remote\", \"{url}\"]}}}}}}\n```\n") +
+            "States are kept per MCP session: the first call returns a `session_id`; pass it in later calls. "
+            "Plots come back as images. The full tool list with descriptions is under *Use via API or MCP* "
+            "at the bottom of the page.")
+
+
 def build_demo(model):
     agent = build_graph(model)
 
@@ -193,10 +220,17 @@ def build_demo(model):
                     gr.DownloadButton("Download a sample counts file", value=SAMPLE_CSV, size="sm")
                     clear = gr.Button("New chat", size="sm")
                 capabilities_panel(box)
+                if mcp_server.ENABLED:
+                    mcp_panel()
             workbench_ui.build(sid, box, tabs)
-        box.submit(respond, [box, chat, sid], [box, chat, sid])
-        upload.upload(prepare_upload, [upload, sid], box)
-        clear.click(new_chat, sid, [chat, sid, box])
+        # UI events are private: not API or MCP endpoints (respond would spend the model quota). The API and
+        # MCP server consist exactly of the tools registered by mcp_server.register().
+        box.submit(respond, [box, chat, sid], [box, chat, sid], api_visibility="private")
+        upload.upload(prepare_upload, [upload, sid], box, api_visibility="private")
+        clear.click(new_chat, sid, [chat, sid, box], api_visibility="private")
+        if mcp_server.ENABLED:
+            mcp_server.register()
+    mcp_server.restrict_api(demo)
     return demo
 
 
@@ -226,4 +260,4 @@ if __name__ == "__main__":
         model = NoModel(str(e))
     demo = build_demo(model)
     demo.queue(max_size=int(os.getenv("QUEUE_SIZE", "40")))     # extra visitors wait in line, then are told to retry
-    demo.launch(css=CSS)
+    demo.launch(css=CSS, mcp_server=mcp_server.ENABLED)

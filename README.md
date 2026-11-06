@@ -12,11 +12,13 @@ compare it with local depolarizing noise on both photons. Which destroys more en
 agent plans the work, calls **32 tested physics tools**, and answers with tables and figures.
 
 **The language model never computes a number.** Every value comes from NumPy/SciPy code that is
-covered by 644 tests and 30 analytic checks. An **answer checker** then compares the model's text
+covered by 678 tests and 30 analytic checks. An **answer checker** then compares the model's text
 with the tool results and corrects, removes or sends back statements that the results do not support.
 
 **Try it:** [huggingface.co/spaces/animesh1986/quantum-information-agent](https://huggingface.co/spaces/animesh1986/quantum-information-agent)
 (chat with the agent, or use the *Workbench* tab: the same tools from panels, without a language model).
+**Or call the tools from your own agent:** the Space is also an [MCP server](#use-the-tools-from-your-own-agent-mcp)
+for Claude Desktop, Cursor and other MCP clients.
 
 ![Workbench: phi+ with all its measures and its density matrix](docs/images/workbench.png)
 
@@ -132,19 +134,63 @@ python run.py      # chat in the terminal
 python app.py      # web app (chat + Workbench) at http://127.0.0.1:7860
 ```
 
-The Workbench works without any key.
+The Workbench and the MCP server work without any key.
+
+## Use the tools from your own agent (MCP)
+
+The app is also an **MCP server** (`mcp_server.py`): 32 tools for photonic states, noise, Lindblad
+evolution, wave plates, tomography, certification, protocols and plots. Another agent calls them
+directly; no language model runs on this side.
+
+| | Address |
+|---|---|
+| Hugging Face Space | `https://animesh1986-quantum-information-agent.hf.space/gradio_api/mcp/` |
+| Local (`python app.py`) | `http://127.0.0.1:7860/gradio_api/mcp/` |
+
+**Cursor** (`~/.cursor/mcp.json`) and other clients that speak streamable HTTP:
+
+```json
+{"mcpServers": {"quantum-information": {"url": "https://animesh1986-quantum-information-agent.hf.space/gradio_api/mcp/"}}}
+```
+
+**Claude Desktop / claude.ai:** *Customize → Connectors → Add custom connector*, paste the Space address
+above, no sign-in needed. The connector is reached from Anthropic's servers, so this works for the Space,
+not for a server on your own computer. For a local server, add a bridge to `claude_desktop_config.json`
+instead (needs Node.js for `npx`), then restart Claude Desktop:
+
+```json
+{"mcpServers": {"quantum-information-local": {"command": "npx",
+  "args": ["mcp-remote", "http://127.0.0.1:7860/gradio_api/mcp/"]}}}
+```
+
+How it works:
+
+* **Sessions.** States live on the server and are addressed by handles (`rho_1`, `rho_2`, …). The first
+  call opens a session and returns a `session_id`; the client passes it in later calls. Ids are random
+  and cannot be chosen, so clients never see each other's states. Sessions end after two hours idle
+  (or with `end_session`), and MCP sessions have their own cap, so they cannot push web visitors out.
+* **Results** are JSON; plotting tools also return the figure as a PNG image.
+* **Your own data:** `reconstruct_state_from_counts` takes the counts as pasted CSV text.
+* **Not exposed:** the chat (it spends the model quota) and the Workbench buttons. The Gradio API of the
+  app consists of exactly these 32 tools (tested).
+* **Limits on the Space:** 120 tool calls per minute for the whole server, bounded sweep sizes, 1 MB of
+  CSV text. Work is serialized with the same compute lock as the chat and the Workbench.
+
+`python mcp_client_check.py [URL]` runs a real MCP client against a server (local by default) and checks
+40 results: closed-form values, images, separate sessions, and refused requests.
 
 ## Tests
 
 ```bash
-pytest -q                     # 644 tests, offline: models are scripted, no API key needed
+pytest -q                     # 678 tests, offline: models are scripted, no API key needed
 python verify_features.py     # 30 results compared with analytic formulas
 ```
 
 The tests run on every push (GitHub Actions). They cover the physics (`test_qi_tools.py`,
 `test_tomography.py`, …), the agent loop with scripted models (`test_graph_offline.py`), the answer
 check (`test_agent_checks.py`, `test_photons_global.py`), the web app and per-user sessions
-(`test_app.py`, `test_session.py`) and the deployment (`test_deploy.py`).
+(`test_app.py`, `test_session.py`), the MCP server (`test_mcp_server.py`) and the deployment
+(`test_deploy.py`).
 
 ## Deploy to a Hugging Face Space
 
@@ -170,12 +216,13 @@ calls have a daily cap, and each visitor has an hourly question limit.
 | `llm.py` | provider chain, fallbacks, call caps |
 | `display.py`, `plots.py` | tables and figures |
 | `app.py`, `workbench.py`, `workbench_ui.py` | Gradio web app (chat + Workbench) |
-| `session.py` | per-user state for the web app |
+| `mcp_server.py` | the physics tools as an MCP server (served by `app.py`) |
+| `session.py` | per-user state for the web app and the MCP server |
 | `run.py` | terminal interface |
 | `capabilities.py` | "What can you do?" answered without a model |
 | `deploy_space.py` | safe deployment to Hugging Face Spaces |
 | `benchmark.py`, `check_llms.py`, `hf_models.py` | compare models and providers |
-| `verify_features.py`, `test_*.py` | analytic checks and tests |
+| `verify_features.py`, `test_*.py`, `mcp_client_check.py` | analytic checks, tests, MCP client check |
 
 ## Author
 

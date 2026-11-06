@@ -448,12 +448,14 @@ def concurrence(rho: np.ndarray) -> float:
     rt = yy @ rho.conj() @ yy
     ev = np.sqrt(np.clip(np.real(np.linalg.eigvals(rho @ rt)), 0, None))
     ev = np.sort(ev)[::-1]
-    return float(max(0.0, ev[0] - ev[1] - ev[2] - ev[3]))
+    # C <= 1 exactly; rounding can give 1 + 4e-16 (e.g. psi- after collective dephasing), which made
+    # sqrt(1 - C^2) in entanglement_of_formation NaN.
+    return float(min(1.0, max(0.0, ev[0] - ev[1] - ev[2] - ev[3])))
 
 
 def entanglement_of_formation(rho: np.ndarray) -> float:
     C = concurrence(rho)
-    x = (1 + np.sqrt(1 - C ** 2)) / 2
+    x = (1 + np.sqrt(max(0.0, 1 - C ** 2))) / 2
     if x in (0.0, 1.0):
         return 0.0
     return float(-x * np.log2(x) - (1 - x) * np.log2(1 - x))

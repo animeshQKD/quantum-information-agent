@@ -136,6 +136,24 @@ def active_ids() -> list[str]:
         return list(_SESSIONS)
 
 
+def exists(session_id: str) -> bool:
+    """Is this session alive (not expired, not dropped)? Does not create it or refresh its idle time."""
+    with _LOCK:
+        _expire_locked()
+        return session_id in _SESSIONS
+
+
+def make_room(prefix: str, limit: int):
+    """Before a new session with this id prefix is created: drop the longest-idle sessions with the
+    prefix until fewer than `limit` remain. MCP clients (mcp_server.py) can open sessions cheaply, so
+    they get their own share and can never push web visitors' sessions out."""
+    with _LOCK:
+        _expire_locked()
+        mine = sorted((s for k, s in _SESSIONS.items() if k.startswith(prefix)), key=lambda s: s.last_used)
+        while mine and len(mine) >= max(1, limit):
+            _drop_locked(mine.pop(0).id)
+
+
 ON_DROP: list = []          # callbacks(session_id), e.g. to forget the chat memory of that session
 
 
