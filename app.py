@@ -127,8 +127,9 @@ def mcp_panel():
     url = mcp_server.server_url(base_url())
     with gr.Accordion("Use these tools from your own agent (MCP server)", open=False):
         gr.Markdown(
-            f"The {len(mcp_server.TOOLS)} physics tools are also an **MCP server**, so other agents can call them "
-            f"directly (no language model runs here):\n\n`{url}`\n\n"
+            "The physics tools are also an **MCP server**, so other agents can call them directly (no language "
+            f"model runs here), {len(mcp_server.TOOLS)} tools in all, including `check_answer`, which runs this "
+            f"app's answer checks on the agent's draft:\n\n`{url}`\n\n"
             "**Cursor** (`~/.cursor/mcp.json`) or any client that speaks streamable HTTP:\n"
             f"```json\n{{\"mcpServers\": {{\"quantum-information\": {{\"url\": \"{url}\"}}}}}}\n```\n"
             + ("**Claude Desktop / claude.ai:** *Customize → Connectors → Add custom connector*, paste the "

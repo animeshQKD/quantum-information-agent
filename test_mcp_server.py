@@ -51,7 +51,7 @@ def new(kind="phi+", **kw) -> tuple[str, dict]:
 def test_api_and_mcp_server_are_exactly_the_curated_tools():
     demo = app.build_demo(app.NoModel("none"))
     named = sorted(e.lstrip("/") for e in demo.get_api_info()["named_endpoints"])
-    assert named == sorted(ms.NAMES) and len(named) == 32
+    assert named == sorted(ms.NAMES) and len(named) == 33
     assert "respond" not in named and "new_session_id" not in named       # chat spends the model quota
     ui = [f for f in demo.fns.values() if f.api_name not in ms.NAMES]
     assert ui and all(f.api_visibility == "private" for f in ui)          # the browser UI still uses them
@@ -69,7 +69,7 @@ def test_every_tool_and_parameter_has_a_description():
 
 
 def test_tool_names_and_choices_match_the_physics_code():
-    assert set(ms.NAMES) - {"list_states", "end_session"} <= {t.name for t in at.TOOLS}
+    assert set(ms.NAMES) - {"list_states", "end_session", "check_answer"} <= {t.name for t in at.TOOLS}
     assert set(typing.get_args(ms.LocalChannel)) == set(at.CHANNELS)
     assert set(typing.get_args(ms.GlobalChannel)) == set(at.GLOBAL_CHANNELS)
     assert set(typing.get_args(ms.AnyChannel)) == set(at.CHANNELS) | set(at.GLOBAL_CHANNELS)
@@ -302,7 +302,7 @@ def test_end_to_end_with_a_real_mcp_client(monkeypatch):
         tools, schema, fig, err = asyncio.run(run())
     finally:
         demo.close()
-    assert len(tools) == 32
+    assert len(tools) == 33
     assert schema["properties"]["channel"]["enum"][:2] == ["phase_damping", "amplitude_damping"]
     assert set(schema["required"]) == {"handle", "channel", "param"}
     kinds = [c.type for c in fig.content]
@@ -324,3 +324,110 @@ def test_the_app_shows_the_right_address_and_setup(monkeypatch):
         texts = [b.value for b in gr.context.get_blocks_context().blocks.values() if isinstance(b, gr.Markdown)]
     assert any("Add custom connector" in t and "https://animesh1986" in t for t in texts)
     assert not any("mcp-remote" in t for t in texts)          # the local bridge is only shown locally
+
+
+# ------------------------------------------------------------------ check_answer: the chat's checks for MCP clients
+Q = "What is the concurrence of a Werner state with p = 0.8?"
+
+
+def check(question, answer, sid):
+    return strict(ms.check_answer(question, answer, sid))
+
+
+def test_check_answer_removes_a_retracted_draft_of_a_real_answer():
+    from test_self_correction import REAL
+    sid, _ = new("werner", p=0.8)
+    ms.compute_measures("rho_1", sid)
+    r = check(Q, REAL, sid)
+    assert r["verdict"] == "problems" and [p["kind"] for p in r["problems"]] == ["self-correction"]
+    assert "Let me reconsider" not in r["corrected_answer"] and "C = p (here" not in r["corrected_answer"]
+    assert r["checked"] == {"tool_calls_for_this_question": 2, "tool_calls_in_session": 2}
+    assert "own words" in r["limits"]
+
+
+def test_check_answer_catches_a_silently_changed_parameter():
+    sid, _ = new("werner", p=0.9)                             # the user asked for p = 0.8
+    c = strict(ms.compute_measures("rho_1", sid))["concurrence"]
+    r = check(Q, f"The concurrence of the Werner state with p = 0.8 is {c:.2f}.", sid)
+    assert r["verdict"] == "problems" and r["problems"][0]["kind"] == "parameter"
+    assert "0.8" in r["problems"][0]["detail"]
+
+
+def test_check_answer_catches_swapped_noise_parameters():
+    q = ("Apply global depolarizing noise with p = 0.3 to phi+ and local depolarizing noise with p = 0.1 on "
+         "both photons, and compare the concurrences.")
+    sid, _ = new("phi+")
+    g = strict(ms.apply_global_noise("rho_1", "global_depolarizing", 0.1, sid))["handle"]      # swapped
+    loc = strict(ms.apply_local_noise("rho_1", "depolarizing", 0.3, "both", sid))["handle"]
+    cg = strict(ms.compute_measures(g, sid))["concurrence"]
+    cl = strict(ms.compute_measures(loc, sid))["concurrence"]
+    r = check(q, f"Global noise gives C = {cg:.4f}, local noise gives C = {cl:.4f}.", sid)
+    kinds = [p["kind"] for p in r["problems"]]
+    assert r["verdict"] == "problems" and "binding" in kinds
+
+
+def test_check_answer_catches_invented_numbers_and_false_statements():
+    sid, _ = new("werner", p=0.8)
+    ms.compute_measures("rho_1", sid)
+    r = check(Q, "The concurrence is 0.7 and the purity is 0.81.", sid)        # purity is 0.73
+    assert r["problems"][0]["kind"] == "ungrounded numbers" and "0.81" in r["problems"][0]["detail"]
+    r = check(Q, "For a Werner state the concurrence is C = p, here 0.7.", sid)
+    assert any(p["kind"] == "false statement" for p in r["problems"])
+    assert "max(0, (3p − 1)/2)" in r["corrected_answer"]
+    assert check(Q, "The concurrence of this Werner state is 0.7, so it is entangled.", sid)["verdict"] == "ok"
+
+
+def test_check_answer_catches_a_failed_call_reported_as_a_result():
+    sid, _ = new("werner", p=0.8)
+    with pytest.raises(gr.Error):
+        ms.compute_measures("rho_9", sid)                     # fails, never redone
+    r = check("What are the measures of rho_9?", "The concurrence of rho_9 is 0.7.", sid)
+    assert any(p["kind"] == "failed tool" for p in r["problems"])
+
+
+def test_check_answer_counts_only_this_questions_calls():
+    sid, _ = new("werner", p=0.8)
+    ms.compute_measures("rho_1", sid)
+    assert check(Q, "C = 0.7.", sid)["checked"]["tool_calls_for_this_question"] == 2
+    q2 = "And for p = 0.5?"
+    ms.create_state("werner", 0.5, session_id=sid)
+    ms.compute_measures("rho_2", sid)
+    r = check(q2, "For p = 0.5 the concurrence is 0.25.", sid)
+    assert r["verdict"] == "ok" and r["checked"] == {"tool_calls_for_this_question": 2, "tool_calls_in_session": 4}
+    r = check(q2, "For p = 0.5 the concurrence is 0.25.", sid)       # the same question again: same calls
+    assert r["checked"]["tool_calls_for_this_question"] == 2
+
+
+def test_stateless_tools_are_seen_by_check_answer_when_given_the_session():
+    sid, _ = new()
+    q = "What is the BB84 key fraction at a QBER of 5%?"
+    k = strict(ms.qkd_key_rate(qber_z=0.05, session_id=sid))["secret_key_fraction"]
+    assert check(q, f"The key fraction is {k}.", sid)["verdict"] == "ok"
+    sid2, _ = new()
+    ms.qkd_key_rate(qber_z=0.05)                              # without the session: not recorded
+    assert check(q, f"The key fraction is {k}.", sid2)["problems"][0]["kind"] == "ungrounded numbers"
+
+
+def test_check_answer_needs_a_session_and_text(monkeypatch):
+    with pytest.raises(gr.Error, match="session_id is empty"):
+        ms.check_answer(Q, "C = 0.7", "")
+    sid, _ = new()
+    with pytest.raises(gr.Error, match="both"):
+        ms.check_answer(" ", "C = 0.7", sid)
+    monkeypatch.setattr(ms, "MAX_RECORDED", 6)               # the record is capped
+    for _ in range(5):
+        ms.compute_measures("rho_1", sid)
+    assert len(session.get(sid).calls) == 6
+
+
+def test_new_sessions_point_clients_to_check_answer():
+    _, out = new()
+    assert "check_answer" in out["session_note"]
+
+
+def test_chat_noise_plot_is_bounded_too_and_the_space_cap_is_150():
+    import time
+    t = time.time()
+    out = at.plot_measures_vs_noise.invoke({"start_kind": "phi+", "channel": "depolarizing", "n_points": 100000})
+    assert time.time() - t < 30 and out["features"]                # 201 points at most, not 100000
+    assert deploy_space.VARIABLES["DAILY_HF_CALLS"] == "150"

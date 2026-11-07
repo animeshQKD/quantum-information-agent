@@ -982,6 +982,7 @@ def plot_measures_vs_noise(start_kind: str, channel: str, n_points: int = 41,
     these features - you cannot see the image."""
     _channel_kraus(channel, 0.5, qubits)          # validates channel and qubits (local or global)
     channel = _channel_name(channel)
+    n_points = int(np.clip(n_points, 11, 201))     # bounded work while the compute lock is held
     rho0 = qt.dm(qt.bell_state(start_kind))
 
     def measures(x):

@@ -39,6 +39,8 @@ class Session:
     fit: dict = field(default_factory=dict)          # handle -> fitted counts (bootstrap)
     samples: dict = field(default_factory=dict)      # handle -> bootstrap states
     question: dict = field(default_factory=lambda: {"text": ""})   # the user's latest question
+    calls: list = field(default_factory=list)        # MCP clients: their tool calls + results (mcp_server.py)
+    check: dict = field(default_factory=dict)        # MCP: where the last check_answer started and ended
     last_provider: str | None = None                 # which model answered this user's last call
     asked: list = field(default_factory=list)        # times of this user's recent questions (rate limit)
     last_used: float = field(default_factory=time.time)
@@ -60,6 +62,8 @@ class Session:
         for d in (self.store, self.desc, self.tomo, self.fit, self.samples):
             d.clear()
         self.question["text"] = ""
+        self.calls.clear()
+        self.check.clear()
 
 
 # numpy/scipy/matplotlib work is serialized: matplotlib's pyplot keeps global state and is not thread-safe,

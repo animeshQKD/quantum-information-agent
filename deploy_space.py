@@ -49,7 +49,7 @@ VARIABLES = {                                                        # public se
     "GROQ_FALLBACK_MODEL": None,
     "GEMINI_MODEL": None,
     "PROVIDER_ORDER": "hf,hf_backup,groq,groq_backup,gemini",
-    "DAILY_HF_CALLS": "500",
+    "DAILY_HF_CALLS": "150",
     "QUESTIONS_PER_HOUR": "40",
 }
 

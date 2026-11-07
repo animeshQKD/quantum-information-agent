@@ -1034,6 +1034,16 @@ _CORRECTIONS.append((re.compile(r"(\b(?:local|each\s+photon|both\s+photons|two\s
                                 r"efficiently|hard|badly|damaging|destructive|harmful)(\s+as)?\b"
                                 r"(?=[^.\n]{0,80}\b(?:global|single|collective|one\s+channel|pair)\b)", re.I),
                      _twice_fix, _TWICE_WHY))
+# Werner state p|B><B| + (1-p) I/4: C = max(0, (3p-1)/2) and N = max(0, (3p-1)/4), never 'C = p'
+# (a real answer: 'For a Werner state ..., the concurrence is C = p (here 0.8)', while the tool gave 0.7)
+_WERNER_WHY = "for a Werner state the concurrence is C = max(0, (3p − 1)/2), not p"
+_CORRECTIONS.append((re.compile(r"(\bWerner\b[^\n]{0,120}?\bconcurrence\s+(?:is\s+|equals\s+)?(?:C\s*)?=\s*)p\b"
+                                r"(?!\s*[-−+*/^²]|\(|\s*\d)(\s*\((?:here|i\.e\.|=)\s*[\d.]+\))?", re.I),
+                     r"\1max(0, (3p − 1)/2)", _WERNER_WHY))
+_CORRECTIONS.append((re.compile(r"(\bWerner\b[^\n]{0,120}?\bconcurrence\s+(?:C\s+)?(?:is\s+|equals\s+)?)"
+                                r"(?:simply\s+|just\s+)?(?:equal\s+to\s+)?(?:the\s+(?:Werner\s+)?(?:weight|parameter)\s+)?p\b"
+                                r"(?!\s*[-−+*/^²=]|\(|\s*\d)(\s*\((?:here|i\.e\.|=)\s*[\d.]+\))?", re.I),
+                     r"\1max(0, (3p − 1)/2)", _WERNER_WHY))
 # circular light: its polarization ellipse has no azimuth ('right circular, azimuth 45°' copied from the input)
 _CIRCULAR_AZIMUTH = [
     (re.compile(r"(circular[^|\n.;]{0,40}?)\bazimuth\s*(?:of\s*|=\s*|:\s*)?[-+]?\d+(?:\.\d+)?\s*°", re.I),
@@ -1804,6 +1814,52 @@ def strip_self_talk(text: str) -> str:
     return "\n".join(out)
 
 
+# A paragraph in which the model takes back what it just wrote ('Let me reconsider. The tool reports
+# concurrence 0.7, not 0.8. Let me report exactly what the tool gave.'), then writes the section again.
+_RETRACTION = re.compile(r"^\s*(?:\*\*)?(?:let\s+me\s+(?:reconsider|re-?think|re-?examine|re-?check|re-?do|correct\s+(?:myself|this|that))"
+                         r"|wait\b|hmm+\b|on\s+second\s+thought|correction\s*:"
+                         r"|actually\s*,?\s+i\s+(?:made|was\s+wrong|misread|mis-?stated)"
+                         r"|(?:that|this)\s+(?:is|was)\s+(?:wrong|incorrect|not\s+right)"
+                         r"|i\s+(?:made|have\s+made)\s+an?\s+(?:error|mistake)|i\s+misspoke|scratch\s+that)", re.I)
+_SECTION_HEAD = re.compile(r"^\s*(?:#{1,6}\s+\S|\*\*[^*\n]+\*\*\s*:?\s*$)")
+
+
+def drop_retracted_draft(text: str) -> tuple[str, bool]:
+    """The model wrote a section, took it back in a paragraph of its own ('Let me reconsider. ...') and
+    wrote it again. Remove the retracted part - from the heading of the section it takes back (or the
+    paragraph just before, when there is no heading) up to and including the retraction - and keep the
+    rewrite. A retraction with nothing after it is removed alone. Tables are never removed.
+    Returns (text, whether anything was removed)."""
+    lines = text.split("\n")
+    marks = [i for i, ln in enumerate(lines) if _RETRACTION.match(ln) and not ln.lstrip().startswith("|")
+             and (i == 0 or not lines[i - 1].strip())]               # starts a paragraph
+    if not marks:
+        return text, False
+    k = marks[-1]
+    end = k
+    while end + 1 < len(lines) and lines[end + 1].strip():          # the whole retraction paragraph
+        end += 1
+    rest = "\n".join(lines[end + 1:]).strip()
+    start = k
+    if rest:                                                         # it is followed by a rewrite
+        floor = max((i + 1 for i in range(k) if lines[i].lstrip().startswith("|")), default=0)
+        heads = [i for i in range(floor, k) if _SECTION_HEAD.match(lines[i])]
+        if heads:
+            start = heads[-1]
+        else:                                                        # the paragraph just before
+            j = k - 1
+            while j >= floor and not lines[j].strip():
+                j -= 1
+            while j >= floor and lines[j].strip():
+                j -= 1
+            start = max(j + 1, floor) if j + 1 < k else k
+            if start == 0 and floor == 0:                            # never the opening sentence
+                start = k
+    out = lines[:start] + lines[end + 1:]
+    new = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip("\n")
+    return (new, True) if new.strip() else (text, False)
+
+
 _META_TO_CHECKER = re.compile(r"\b(the\s+user['’]?s?|the\s+verifier|the\s+answer\s+check)\b", re.I)
 _META_ABOUT_SELF = re.compile(r"\b(i\s+keep\s+my\s+answer|my\s+(previous\s+|original\s+)?answer|"
                               r"(need|needed|have)\s+to\s+call\s+(a|the|any)\s+tool|call\s+a\s+tool\s+for|"
@@ -1881,7 +1937,7 @@ def _answer_check(state: AgentState):
     final = msgs[-1]
     if getattr(final, "name", None) in (BUDGET_STOP, HELP_REPLY):
         return {}
-    text = strip_self_talk(strip_restatement(strip_meta(_normalize(_text(final)))))
+    text = drop_retracted_draft(strip_self_talk(strip_restatement(strip_meta(_normalize(_text(final))))))[0]
     if text != _text(final):            # e.g. gpt-oss writes 'Bell‑local' with U+2011: checks need '-'
         final = AIMessage(content=text, id=final.id, tool_calls=[])
     earlier = " ".join(_text(m) for m in msgs[start:] if _is_verifier(m))

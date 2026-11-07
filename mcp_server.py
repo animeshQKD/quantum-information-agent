@@ -81,6 +81,10 @@ DMStyle = Literal["bars3d", "heatmap", "magnitude_phase"]
 RConvention = Literal["R=(H+iV)/sqrt2", "R=(H-iV)/sqrt2"]
 Polarization = Literal["", "H", "V", "D", "A", "R", "L"]
 
+NEW_SESSION_NOTE = ("New session opened. Pass this session_id in every later call that uses these states. "
+                    "Before you answer the user, call check_answer with the user's question and your draft answer.")
+OPTIONAL_SESSION = ("Optional: your session_id, so that check_answer can see this result. Leave empty to run "
+                    "without a session.")
 SESSION = ("Session from an earlier result of this server. Leave empty on your first call: a new session "
            "is opened and its session_id is returned. Pass that session_id in every later call so the "
            "stored states (rho_1, rho_2, ...) are kept. Sessions are deleted after 2 hours without a call.")
@@ -190,21 +194,51 @@ def _message(e: Exception) -> str:
     return msg.split("\n Please fix your mistakes.")[0].strip() or type(e).__name__
 
 
+MAX_RECORDED = 600            # messages kept per session for check_answer (300 calls); older ones are dropped
+
+
+def _record(s, name: str, args: dict, out=None, error: str = ""):
+    """Keep the call and its result in the session, in the same form as the chat's own tool calls
+    (an AIMessage with the call, a ToolMessage with the result), so graph.py's answer checks can read
+    them in check_answer."""
+    from langchain_core.messages import AIMessage, ToolMessage
+    from langgraph.prebuilt.tool_node import msg_content_output
+    cid = f"mcp{len(s.calls)}"
+    s.calls.append(AIMessage(content="", tool_calls=[{"name": name, "args": dict(args), "id": cid}]))
+    if error:
+        s.calls.append(ToolMessage(content=f"Error: {error}", tool_call_id=cid, name=name, status="error"))
+    else:
+        s.calls.append(ToolMessage(content=msg_content_output(out), tool_call_id=cid, name=name))
+    if len(s.calls) > MAX_RECORDED:
+        drop = len(s.calls) - MAX_RECORDED
+        del s.calls[:drop]
+        for k in ("start", "end"):
+            if k in s.check:
+                s.check[k] = max(0, s.check[k] - drop)
+
+
 def run(tool, session_id: str = "", *, stateful: bool = True, create: bool = True,
         figure: bool = False, **args):
     """Run one agent_tools tool for an MCP client. Returns the JSON text, plus the figure (gr.FileData)
-    for figure tools."""
+    for figure tools. Stateless tools are recorded too when the client passes its session_id."""
     _throttle()
     if stateful:
         sid, created = _open(session_id, create)
+    elif (session_id or "").strip():
+        sid, created = _open(session_id, create=False)
     else:
         sid, created = STATELESS_ID, False
+    record = sid != STATELESS_ID
     with session.use(sid) as s, session.COMPUTE_LOCK:
         at.CURRENT_QUESTION["text"] = ""         # the chat's question checks do not apply to an MCP call
         try:
             out = tool.invoke(args)
         except Exception as e:  # noqa: BLE001 - every tool error goes back to the client as its message
+            if record:
+                _record(s, tool.name, args, error=_message(e))
             raise McpToolError(_message(e)) from None
+        if record:
+            _record(s, tool.name, args, out)
         result = {"result": out} if isinstance(out, str) else dict(out)
         if isinstance(out, str) and (m := _CREATED.match(out)):
             result["handle"] = m.group(1)
@@ -213,11 +247,10 @@ def run(tool, session_id: str = "", *, stateful: bool = True, create: bool = Tru
         if figs:
             result["figure"] = ("returned as a PNG image with this result"
                                 + (f" ({len(figs)} figures stacked vertically)" if len(figs) > 1 else ""))
-    if stateful:
+    if record:
         result = {"session_id": sid, **result}
         if created:
-            result["session_note"] = ("New session opened. Pass this session_id in every later call that "
-                                      "uses these states.")
+            result["session_note"] = NEW_SESSION_NOTE
     text = json.dumps(_finite(_public(result, sid)), ensure_ascii=False, allow_nan=False)
     return (text, gr.FileData(path=image)) if figure else text
 
@@ -243,6 +276,74 @@ def end_session(session_id: str) -> str:
     sid, _ = _open(session_id, create=False)
     session.drop(sid)
     return json.dumps({"session_id": sid, "result": "Session deleted."})
+
+
+CHECK_LIMITS = ("check_answer sees the user's question as you send it, your draft answer, and the calls made "
+                "to this server in this session. It cannot see calls to other tools, what you write after the "
+                "check, or what the user really asked if you paraphrase the question: send the user's own words.")
+
+
+@describe("Check your draft answer before you give it to the user, with the same checks this app's own chat "
+          "runs on its model's answers. Send the user's question in their own words and your complete draft. "
+          "It compares the draft with the calls you made to this server in this session: numbers that no "
+          "result (or the question) contains, values from the question that no call used (e.g. p = 0.8 asked, "
+          "p = 0.9 computed), noise parameters bound to the wrong channel, states named in the question but "
+          "never computed, failed calls reported as results, known false statements (e.g. 'C = p for a Werner "
+          "state', 'CHSH <= 2 proves locality'), and thinking aloud or a retracted draft left in the text. "
+          "Returns verdict 'ok' or 'problems', each problem with what to fix, and corrected_answer when "
+          "statements could be corrected automatically. Calls made since your previous check of a different "
+          "question count as this question's calls.",
+          question="The user's question, in the user's own words.",
+          answer="Your complete draft answer, exactly as you would show it.",
+          session_id=SESSION)
+def check_answer(question: str, answer: str, session_id: str) -> str:
+    import graph
+    from langchain_core.messages import HumanMessage
+    _throttle()
+    if not question.strip() or not answer.strip():
+        raise McpToolError("Give both the user's question and your draft answer.")
+    sid, _ = _open(session_id, create=False)
+    with session.use(sid) as s, session.COMPUTE_LOCK:
+        q = question.strip()
+        start = s.check.get("start", 0) if s.check.get("question") == q else s.check.get("end", 0)
+        start = min(start, len(s.calls))
+        s.check.update(question=q, start=start, end=len(s.calls))
+        turn = [HumanMessage(q)] + s.calls[start:]
+        history = s.calls[:start] + turn
+        at.CURRENT_QUESTION["text"] = q
+        try:
+            original = graph._normalize(answer)
+            text = graph.drop_retracted_draft(graph.strip_self_talk(graph.strip_restatement(
+                graph.strip_meta(original))))[0]
+            problems = []
+            if text.strip() != original.strip():
+                problems.append({"kind": "self-correction", "detail": (
+                    "The draft contains thinking aloud, a reply to a checker, or a section you took back "
+                    "('Let me reconsider ...'). corrected_answer has it removed; give the user only the final text.")})
+            bad = list(dict.fromkeys(graph.ungrounded_numbers(text, history) + graph.ungrounded_counts(text, history)))
+            if bad:
+                problems.append({"kind": "ungrounded numbers", "detail": (
+                    "These numbers appear in no result of this session and not in the question: " + ", ".join(bad)
+                    + ". Use only numbers the tools returned (call a tool for any value the user asked for), "
+                    "or say that a value is your own estimate.")})
+            for key, note in graph.completion_and_claim_notes(q, turn, text, history):
+                problems.append({"kind": key, "detail": note})
+            fixed, reasons = graph.remove_false_claims(text, history)
+            for why in reasons:
+                problems.append({"kind": "false statement", "detail": why})
+            extra = graph.required_notes(turn, fixed)
+        finally:
+            at.CURRENT_QUESTION["text"] = ""
+        calls_now = sum(1 for m in turn if getattr(m, "tool_calls", None))
+    out = {"session_id": sid, "verdict": "problems" if problems else "ok", "problems": problems,
+           "checked": {"tool_calls_for_this_question": calls_now,
+                       "tool_calls_in_session": sum(1 for m in history if getattr(m, "tool_calls", None))}}
+    if extra:
+        out["notes_to_add"] = extra
+    if fixed.strip() != original.strip():
+        out["corrected_answer"] = fixed + ("\n\n" + "\n".join(f"*{x}*" for x in extra) if extra else "")
+    out["limits"] = CHECK_LIMITS
+    return json.dumps(_finite(_public(out, sid)), ensure_ascii=False, allow_nan=False)
 
 
 # ------------------------------------------------------------------ states
@@ -383,9 +484,9 @@ def apply_global_noise(handle: str, channel: GlobalChannel, param: float, sessio
           "the 4x4 operators on the pair (HH, HV, VH, VV). Needs no session.",
           channel="Local or global channel name (as in apply_local_noise / apply_global_noise).",
           param="Channel parameter (phase_damping: coherence factor λ, 1 = no noise; all others 0 = no noise).",
-          qubits="For local channels: 'both', 'A' or 'B'.")
-def get_kraus_operators(channel: AnyChannel, param: float, qubits: Qubits = "both") -> str:
-    return run(at.get_kraus_operators, stateful=False, channel=channel, param=param, qubits=qubits)
+          qubits="For local channels: 'both', 'A' or 'B'.", session_id=OPTIONAL_SESSION)
+def get_kraus_operators(channel: AnyChannel, param: float, qubits: Qubits = "both", session_id: str = "") -> str:
+    return run(at.get_kraus_operators, session_id, stateful=False, channel=channel, param=param, qubits=qubits)
 
 
 @describe("Apply your OWN Kraus operators to a stored state: rho -> Σ K ρ K†, stored as a new state. 2x2 "
@@ -481,7 +582,7 @@ def reconstruct_state_from_counts(csv_text: str = "", csv_path: str = "", count_
                r_convention=r_convention, error_bars=error_bars)
     if sid != session_id and csv_text.strip() and not session_id.strip():     # opened above, not by run()
         out = json.loads(text)
-        out["session_note"] = "New session opened. Pass this session_id in every later call that uses these states."
+        out["session_note"] = NEW_SESSION_NOTE
         text = json.dumps(out, ensure_ascii=False)
     return text
 
@@ -562,20 +663,20 @@ def teleportation_fidelity(handle: str, session_id: str) -> str:
           handle="Handle of a stored state, or empty when QBERs are given.",
           qber_z="Bit error rate in the key basis, in [0, 0.5].",
           qber_x="Phase error rate (other basis); default = qber_z.",
-          session_id="Needed only with handle. " + SESSION)
+          session_id="Needed with handle; optional with QBERs (then check_answer can see the result). " + SESSION)
 def qkd_key_rate(handle: str = "", qber_z: float | None = None, qber_x: float | None = None,
                  session_id: str = "") -> str:
     if handle.strip():
         return run(at.qkd_key_rate, session_id, create=False, handle=handle, qber_z=qber_z, qber_x=qber_x)
-    return run(at.qkd_key_rate, stateful=False, handle="", qber_z=qber_z, qber_x=qber_x)
+    return run(at.qkd_key_rate, session_id, stateful=False, handle="", qber_z=qber_z, qber_x=qber_x)
 
 
 @describe("Three-qubit bit-flip repetition code with majority vote against independent bit flips of "
           "probability p per qubit: logical error p_L = 3p² - 2p³ versus p unencoded; the code helps iff "
           "p < 1/2 (it does not protect against phase flips). Needs no session.",
-          p="Bit-flip probability per qubit, in [0, 1].")
-def bit_flip_code(p: float) -> str:
-    return run(at.bit_flip_code, stateful=False, p=p)
+          p="Bit-flip probability per qubit, in [0, 1].", session_id=OPTIONAL_SESSION)
+def bit_flip_code(p: float, session_id: str = "") -> str:
+    return run(at.bit_flip_code, session_id, stateful=False, p=p)
 
 
 # ------------------------------------------------------------------ plots (each returns a PNG image)
@@ -654,7 +755,7 @@ def plot_fringes(handle: str, alice_angles: list[float] | None = None, session_i
                alice_angles=alice_angles or [0.0, 45.0, 90.0, 135.0])
 
 
-TOOLS = [list_states, end_session,
+TOOLS = [list_states, end_session, check_answer,
          create_state, create_pure_state, create_single_photon_state, mix_states, reduced_state, combine_photons,
          compute_measures, show_density_matrix, compare_states,
          apply_local_noise, apply_global_noise, get_kraus_operators, apply_kraus_operators,

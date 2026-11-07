@@ -8,14 +8,18 @@ and the security limits.
     python mcp_client_check.py https://animesh1986-quantum-information-agent.hf.space/gradio_api/mcp/
 
 On the Space every tool name has the prefix 'quantum_information_agent_'; it is detected automatically.
-About 45 tool calls (the Space allows 120 per minute). Needs the 'mcp' package (pip install "gradio[mcp]").
+About 50 tool calls (the Space allows 120 per minute). Needs the 'mcp' package (pip install "gradio[mcp]").
 """
 import asyncio
 import base64
 import json
 import math
+import os
 import sys
 import time
+from urllib.parse import urlparse
+
+import httpx
 
 from mcp import ClientSession
 try:                                                    # newer mcp versions; older ones have the old name
@@ -25,7 +29,7 @@ except ImportError:
 
 LOCAL = "http://127.0.0.1:7860/gradio_api/mcp/"
 SAMPLE_CSV = "data/state_tomo_data.csv"            # run this script in the project folder
-EXPECTED_TOOLS = 32
+EXPECTED_TOOLS = 33
 results: list[tuple[bool, str]] = []
 
 
@@ -162,6 +166,25 @@ async def main(url: str):
             cross = json.dumps(sw["results"])
             check("0.333" in cross, "Werner sweep: concurrence crosses 0 at p = 1/3")
 
+            # --- check_answer: the app's answer checks on an outside agent's draft
+            q = "What is the concurrence of a Werner state with p = 0.8?"
+            mine = await c.ok("create_state", kind="werner", p=0.9)             # silently changed: 0.9
+            m9 = await c.ok("compute_measures", handle=mine["handle"], session_id=mine["session_id"])
+            r = await c.ok("check_answer", question=q, session_id=mine["session_id"],
+                           answer=f"The concurrence of the Werner state with p = 0.8 is {m9['concurrence']:.2f}.")
+            check(r["verdict"] == "problems" and r["problems"][0]["kind"] == "parameter",
+                  "check_answer: p = 0.8 asked, p = 0.9 computed -> flagged, though every number is a tool result")
+            ok8 = await c.ok("create_state", kind="werner", p=0.8, session_id=mine["session_id"])
+            await c.ok("compute_measures", handle=ok8["handle"], session_id=mine["session_id"])
+            r = await c.ok("check_answer", question=q, session_id=mine["session_id"],
+                           answer="The concurrence of the Werner state with p = 0.8 is 0.7, so it is entangled.")
+            check(r["verdict"] == "ok", "check_answer: the corrected answer passes")
+            r = await c.ok("check_answer", question=q, session_id=mine["session_id"], answer=(
+                "**What it means**\n\n- For a Werner state the concurrence is C = p (here 0.8).\n\n"
+                "Let me reconsider. The tool reports 0.7.\n\n**What it means**\n\n- The concurrence is 0.7."))
+            check(r["verdict"] == "problems" and "Let me reconsider" not in r.get("corrected_answer", "Let me")
+                  and "C = p" not in r["corrected_answer"], "check_answer: a retracted draft is flagged and removed")
+
             # --- sessions are separate; errors and limits
             other = await c.ok("create_state", kind="psi-")
             check(other["session_id"] != sid and other["handle"] == "rho_1", "a second client gets its own session")
@@ -207,5 +230,33 @@ async def main(url: str):
 
 
 
+def reachable(url: str) -> bool:
+    """Is the server there? Says why not, instead of a long traceback from inside the MCP client."""
+    host = urlparse(url).hostname or ""
+    if host in ("127.0.0.1", "localhost", "::1"):
+        # A proxy set in Windows (or in HTTP_PROXY) would receive requests for 127.0.0.1 too: browsers skip it
+        # for local addresses, httpx does not. NO_PROXY makes httpx (and the MCP client) talk to the app directly.
+        for k in ("NO_PROXY", "no_proxy"):
+            os.environ[k] = ",".join(x for x in (os.environ.get(k, ""), "127.0.0.1,localhost,::1") if x)
+    try:
+        r = httpx.get(url, timeout=20, follow_redirects=True)
+    except httpx.HTTPError as e:
+        print(f"Cannot reach {url}\n  ({type(e).__name__}: {e})")
+        if host in ("127.0.0.1", "localhost"):
+            print("  Is 'python app.py' still running in another terminal? It must print\n"
+                  "  'Streamable HTTP URL: http://127.0.0.1:7860/gradio_api/mcp/'. If it printed another port\n"
+                  "  (7860 was busy), pass that address: python mcp_client_check.py http://127.0.0.1:7861/gradio_api/mcp/")
+        else:
+            print("  Is the Space running (not building, sleeping or paused)? Open its page first, then retry.")
+        return False
+    if r.status_code >= 400:
+        print(f"{url} answered HTTP {r.status_code}: is this the MCP address (ending in /gradio_api/mcp/)?")
+        return False
+    return True
+
+
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else LOCAL)))
+    target = sys.argv[1] if len(sys.argv) > 1 else LOCAL
+    if not reachable(target):
+        sys.exit(2)
+    sys.exit(asyncio.run(main(target)))

@@ -12,7 +12,7 @@ compare it with local depolarizing noise on both photons. Which destroys more en
 agent plans the work, calls **32 tested physics tools**, and answers with tables and figures.
 
 **The language model never computes a number.** Every value comes from NumPy/SciPy code that is
-covered by 678 tests and 30 analytic checks. An **answer checker** then compares the model's text
+covered by 694 tests and 30 analytic checks. An **answer checker** then compares the model's text
 with the tool results and corrects, removes or sends back statements that the results do not support.
 
 **Try it:** [huggingface.co/spaces/animesh1986/quantum-information-agent](https://huggingface.co/spaces/animesh1986/quantum-information-agent)
@@ -138,8 +138,9 @@ The Workbench and the MCP server work without any key.
 
 ## Use the tools from your own agent (MCP)
 
-The app is also an **MCP server** (`mcp_server.py`): 32 tools for photonic states, noise, Lindblad
-evolution, wave plates, tomography, certification, protocols and plots. Another agent calls them
+The app is also an **MCP server** (`mcp_server.py`): 33 tools, the physics tools for photonic states,
+noise, Lindblad evolution, wave plates, tomography, certification, protocols and plots, two session tools,
+and `check_answer`, which runs this app's answer checks on another agent's draft. Another agent calls them
 directly; no language model runs on this side.
 
 | | Address |
@@ -172,17 +173,58 @@ How it works:
 * **Results** are JSON; plotting tools also return the figure as a PNG image.
 * **Your own data:** `reconstruct_state_from_counts` takes the counts as pasted CSV text.
 * **Not exposed:** the chat (it spends the model quota) and the Workbench buttons. The Gradio API of the
-  app consists of exactly these 32 tools (tested).
+  app consists of exactly these 33 tools (tested).
 * **Limits on the Space:** 120 tool calls per minute for the whole server, bounded sweep sizes, 1 MB of
   CSV text. Work is serialized with the same compute lock as the chat and the Workbench.
 
 `python mcp_client_check.py [URL]` runs a real MCP client against a server (local by default) and checks
-40 results: closed-form values, images, separate sessions, and refused requests.
+43 results: closed-form values, images, separate sessions, refused requests and `check_answer`.
+
+### Which checks apply where
+
+The physics is the same on both sides, but the built-in chat and an outside agent are not checked in the
+same way. The answer check in `graph.py` reads the user's question and the model's draft. Over MCP the
+server never sees either, unless the client sends them to `check_answer`.
+
+| Check | Built-in chat | MCP client |
+|---|---|---|
+| Tool schemas: fixed choices, required arguments, types | always | always |
+| Tool validation: ranges, ΣK†K = I, unknown handles, CSV checks | always | always |
+| Results state what they were computed for ("Created rho_1 (werner, p=0.8)") | always | always |
+| The draft quotes only numbers the tools returned | always | with `check_answer` |
+| Every value in the question was used (asked p = 0.8, computed p = 0.9) | always | with `check_answer` |
+| Noise parameters bound to the right channel | always | with `check_answer` |
+| Known false statements corrected ("C = p for a Werner state") | always | with `check_answer` |
+| Thinking aloud and retracted drafts removed | always | with `check_answer` |
+| Question-dependent checks inside tools (e.g. the Bell state named in the question) | always | no: tools never see the question |
+
+`check_answer` is optional: a client that does not call it, or paraphrases the question, is not checked.
+It sees only the calls made to this server in the same session, so stateless tools (`qkd_key_rate`,
+`bit_flip_code`, `get_kraus_operators`) take an optional `session_id` for this.
+
+**The same question on both sides.** *"What is the concurrence of a Werner state with p = 0.8?"* The
+tools return C = 0.7000, N = 0.3500, purity 0.7300, CHSH max 2.2627.
+
+* **Built-in chat** (a real answer of the Space, 2026-11-06). The model wrote "the concurrence is C = p
+  (here 0.8)", then "Let me reconsider. The tool reports concurrence 0.7, not 0.8", then rewrote the
+  section. The answer check now removes the retracted section and keeps the rewrite
+  (`test_self_correction.py`).
+* **An outside agent that sends the same draft to `check_answer`** gets `verdict: problems`,
+  `self-correction`, and a `corrected_answer` with the same section removed.
+* **An outside agent that silently computed p = 0.9** (example draft: "The concurrence of the Werner state
+  with p = 0.8 is 0.85.") gets `verdict: problems`, `parameter`: *the user's request contains the value(s)
+  0.8 but no tool call in this turn used it*. Every number in that draft is a correct tool result, so
+  only the comparison with the question catches it.
+* **An outside agent that does not call `check_answer`** shows the user whatever it writes. The only trace
+  of a changed parameter is the client's own record of its tool calls (Claude shows the arguments when it
+  asks permission for a call).
+
+These cases are tests in `test_mcp_server.py`.
 
 ## Tests
 
 ```bash
-pytest -q                     # 678 tests, offline: models are scripted, no API key needed
+pytest -q                     # 694 tests, offline: models are scripted, no API key needed
 python verify_features.py     # 30 results compared with analytic formulas
 ```
 

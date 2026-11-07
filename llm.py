@@ -10,7 +10,7 @@ Order (providers without a key are skipped):
   1c. Hugging Face (Pro credits)  needs HF_TOKEN and USE_HF=1  model HF_MODEL (+ HF_FALLBACK_MODEL)
      Open models through the Hugging Face router (OpenAI-compatible). Uses the monthly
      included credits of your account; capped per run by MAX_HF_CALLS (local default 300)
-     and per day by DAILY_HF_CALLS (default 500 on a Space, no daily cap locally).
+     and per day by DAILY_HF_CALLS (default 150 on a Space, no daily cap locally).
   2. Gemini    (free tier)        needs GOOGLE_API_KEY
   3. Ollama    (free, local)      needs Ollama installed and running
   4. OpenAI    (PAID, capped)     needs OPENAI_API_KEY *and* ALLOW_OPENAI=1 (never on a Space)
@@ -120,7 +120,7 @@ def _hf_with_cap(model):
     (MAX_HF_CALLS, 0 = none) and per UTC day (DAILY_HF_CALLS, 0 = none). Over a cap the call fails,
     so the next (free) provider answers."""
     run_cap = int(os.getenv("MAX_HF_CALLS", "0" if ON_SPACE else "300"))
-    day_cap = int(os.getenv("DAILY_HF_CALLS", "500" if ON_SPACE else "0"))
+    day_cap = int(os.getenv("DAILY_HF_CALLS", "150" if ON_SPACE else "0"))
 
     def call(messages):
         if run_cap and USAGE["hf_calls"] >= run_cap:
